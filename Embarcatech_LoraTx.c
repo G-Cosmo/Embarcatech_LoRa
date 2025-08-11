@@ -326,7 +326,7 @@ void setLora()
     writeRegisterBit(REG_OPMODE, 6, 0); // Desativa o acesso ao registrador compartilhado com o modo FSK
     writeRegisterBit(REG_OPMODE, 5, 1); // Ativa o modo de alta frequência
 
-    setFrequency(freq); // Define a frequencia
+    setFrequency(freq); // Define a frequencia com a função já feita pelo prof
 
     setBW(bw); // Define a largua de banda
 
@@ -359,7 +359,7 @@ void setLora()
         writeRegisterBit(REG_MODEM_CONFIG, 0, 0);   // Desativa o implicit header mode
     }
 
-    setSF(sf);  // Define o spreading factor (O caso do sf 6 não foi tratado, portanto, ele só pode ser de 7 até 12)
+    setSF(sf);  // Define o spreading factor (O caso do sf 6 não foi tratado, precisa de uma config especifica, portanto, ELE SÓ PODE SER DE 7 ATÉ 12)
 
     if(crc_mode)    // Verifica a flag de ativação do CRC 
     {
@@ -370,9 +370,9 @@ void setLora()
     }
     // O spreading factor utiliza bits do registrador REG_MODEM_CONFIG2
     // Esse registrador também é responsável por outros parametros (TxContinuousMode por exemplo)
-    // Eles foram deixados como padrão nesse primeiro momento, mas podem precisar ser alterados depois
+    // Tirando o do CRC, eles foram deixados como padrão nesse primeiro momento, mas podem precisar ser alterados depois
 
-    if(ldro)    // Checa se o LowDataRateOptimize deve ser ligado
+    if(ldro)   // Checa se o LowDataRateOptimize deve ser ligado
     {
         writeRegisterBit(REG_MODEM_CONFIG3, 3, 1); // ativa o LDRO
     }else{
