@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "pico/stdlib.h"
+#include "pico/binary_info.h"
 #include "hardware/spi.h"
 #include "hardware/i2c.h"
 #include "hardware/gpio.h"
@@ -10,7 +11,18 @@
 #include "lib/payload.h"
 #include "lib/spi_funcs.h"
 #include "lib/ssd1306.h"
+#include "lib/lora.h"
 
+//LoRa Mode Register Map página 108 do datasheet do sx1276
+
+// Configurações do SPI
+#define MOSI_PIN 19
+#define MISO_PIN 16
+#define SPI_SCL_PIN 18
+#define CSN_PIN 17  //chip select
+#define BAUD_RATE 500*1000 //define o baud rate como 0,5 MHZ
+
+#define RST_PIN 20 // ESSE PINO TEM QUE SER MUDADO PARA O PINO DE RESET CORRETO
 
 // Configurações da I2C do display
 #define I2C_PORT_DISP i2c1
@@ -38,6 +50,17 @@ int32_t raw_pressure;
 
 uint32_t last_sensor_read = 0;
 
+// Configurações do - TX:
+uint16_t payload_len = 10; // Tamanho do payload em byte
+uint16_t preamble_len = 8; // Tamanho do preâmbulo
+uint16_t sf = 7; // fator de espalhamento (Spreading Factor)
+uint16_t crc = 0; // tamanho do CRC (Cyclic Redundancy Check) em bytes (normalmente 2 bytes) (não encontrei uso para essa variável, tamanho do CRC?)
+bool crc_mode = true; // flag que indica se o CRC deve ou não ser ativado
+bool ih = false; // Cabeçalho implícito (Implicit Header) (false = explicit header mode)
+uint32_t bw = 125000; // largura de banda (Bandwidth) em Hz
+uint16_t cr = 1; // Taxa de codificação (Coding Rate)
+bool ldro = false; // ldro = true => LowDataRateOptimize ativado
+double freq = 915; // frequencia em MHz
 
 // -> ISR dos Botões =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 // Tratamento de interrupções 
@@ -62,11 +85,24 @@ void gpio_irq_handler(uint gpio, uint32_t events){
     }
 }
 
+void setFrequency(double Frequency);
+void setLora();
 
 int main()
 {
     stdio_init_all();
-    sleep_ms(1000);
+    sleep_ms(1000);   
+    
+    // Iniciando os botões
+    gpio_init(BUTTON_A);
+    gpio_set_dir(BUTTON_A, GPIO_IN);
+    gpio_pull_up(BUTTON_A);
+    gpio_set_irq_enabled_with_callback(BUTTON_A, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
+
+    gpio_init(BUTTON_B);
+    gpio_set_dir(BUTTON_B, GPIO_IN);
+    gpio_pull_up(BUTTON_B);
+    gpio_set_irq_enabled_with_callback(BUTTON_B, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
 
     // Iniciando o display
     i2c_init(I2C_PORT_DISP, 400 * 1000);
@@ -78,8 +114,8 @@ int main()
     ssd1306_init(&ssd, WIDTH, HEIGHT, false, endereco, I2C_PORT_DISP);
     ssd1306_config(&ssd);
     ssd1306_fill(&ssd, false);
-    ssd1306_draw_string(&ssd, "Iniciando Wi-Fi", 0, 0, false);
-    ssd1306_draw_string(&ssd, "Aguarde...", 0, 30, false);    
+    ssd1306_draw_string(&ssd, "Iniciando", 0, 0, false);
+    ssd1306_draw_string(&ssd, "Aguarde...", 0, 30, false);      
     ssd1306_send_data(&ssd);
 
     // Iniciando o I2C dos sensores
@@ -98,16 +134,27 @@ int main()
     aht20_reset(I2C_PORT);
     aht20_init(I2C_PORT);
 
-    // Iniciando os botões
-    gpio_init(BUTTON_A);
-    gpio_set_dir(BUTTON_A, GPIO_IN);
-    gpio_pull_up(BUTTON_A);
-    gpio_set_irq_enabled_with_callback(BUTTON_A, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
+    //Inicializando o SPI
+    spi_init(spi_default, BAUD_RATE);  //define a frequência do SPI como 0,5 MHZ
+    gpio_set_function(MISO_PIN, GPIO_FUNC_SPI);
+    gpio_set_function(SPI_SCL_PIN, GPIO_FUNC_SPI);
+    gpio_set_function(MOSI_PIN, GPIO_FUNC_SPI);
+    // // Make the SPI pins available to picotool
+    // bi_decl(bi_3pins_with_func(PICO_DEFAULT_SPI_RX_PIN, PICO_DEFAULT_SPI_TX_PIN, PICO_DEFAULT_SPI_SCK_PIN, GPIO_FUNC_SPI));
 
-    gpio_init(BUTTON_B);
-    gpio_set_dir(BUTTON_B, GPIO_IN);
-    gpio_pull_up(BUTTON_B);
-    gpio_set_irq_enabled_with_callback(BUTTON_B, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
+    // Inicializando o Chip Select em driven-high state, ele é ativado em low
+    gpio_init(CSN_PIN);
+    gpio_set_dir(CSN_PIN, GPIO_OUT);
+    gpio_put(CSN_PIN, 1);
+    // Make the CS pin available to picotool
+    // bi_decl(bi_1pin_with_name(PICO_DEFAULT_SPI_CSN_PIN, "SPI CS"));
+
+    // Inicializando o pino de reset, que é ativado em nível baixo
+    gpio_init(RST_PIN);
+    gpio_set_dir(RST_PIN, GPIO_OUT);
+    gpio_put(RST_PIN, 1);
+
+    setLora();
 
     while (true) {
 
@@ -229,4 +276,120 @@ int main()
             //     break;
         }
     }
+}
+
+
+// Definir frequência de operação
+void setFrequency(double Frequency)
+{
+    unsigned long FrequencyValue; //Frequência corrida - valor para os registradores do SX1276
+
+    printf("Frequência escolhida %.3f MHz\n", Frequency);
+
+    Frequency = Frequency * 7110656 / 434; //Fórmula para correção da frequência - considerando o padrão de 434 MHz - 6C 80 00
+    FrequencyValue = (unsigned long)(Frequency);
+    printf("Frequencia calculada para ajuste dos registradores: %lu\n", FrequencyValue);
+
+    writeRegister(REG_FRF_MSB, (FrequencyValue >> 16) & 0xFF); // Escrita no registrador RegFrMsb (0x06)
+    writeRegister(REG_FRF_MID, (FrequencyValue >> 8) & 0xFF); // Escrita no registrador RegFrMid (0x07)
+    writeRegister(REG_FRF_LSB, FrequencyValue & 0xFF); // Escrita no registrador RegFrLsb (0x08)
+    printf("Impressão de valor binário da frequência:\n");
+
+    // imprimir_binario(FrequencyValue); // Imprimir o valor binário de 32 bits - FrequencyValue
+    // printf("\n");
+    // printf("Frequ. Regs. config:\n");
+
+    // Teste de leitura dos registradores RegFrMsb, RegFrMid e RegFrLsb.
+    readRegister(REG_FRF_MSB);
+    readRegister(REG_FRF_MID);
+    readRegister(REG_FRF_LSB);
+}
+
+void setLora()
+{
+    setMode(1); // Coloca o registrador RegOpMode no modo sleep, os modos estão descritos em comentários na função
+
+    writeRegisterBit(REG_OPMODE, 7, 1); // Escreve o valor 1 no bit 7 de REG_OPMODE sem alterar os outros valores (coloca no modo LoRa)
+    writeRegisterBit(REG_OPMODE, 6, 0); // Desativa o acesso ao registrador compartilhado com o modo FSK
+    writeRegisterBit(REG_OPMODE, 5, 1); // Ativa o modo de alta frequência
+
+    setFrequency(freq); // Define a frequencia
+
+    setBW(bw); // Define a largua de banda
+
+    // Define o coding rate de acordo com a variável cr (deve ser entre 1 e 4 e o default é 1)
+    switch(cr) 
+    {
+    case 1:
+        writeRegisterField(REG_MODEM_CONFIG, 3, 3, 0b001);
+        break;
+    case 2:
+        writeRegisterField(REG_MODEM_CONFIG, 3, 3, 0b010);
+        break;
+    case 3:
+        writeRegisterField(REG_MODEM_CONFIG, 3, 3, 0b011);
+        break;
+    case 4:
+        writeRegisterField(REG_MODEM_CONFIG, 3, 3, 0b100);
+        break;
+    default:
+        writeRegisterField(REG_MODEM_CONFIG, 3, 3, 0b001);
+        break;
+    }
+
+    if(ih){  // Verifica a flag do implicit header mode
+
+        writeRegisterBit(REG_MODEM_CONFIG, 0, 1);   // Ativa o implicit header mode
+
+    }else
+    {
+        writeRegisterBit(REG_MODEM_CONFIG, 0, 1);   // Desativa o implicit header mode
+    }
+
+    setSF(sf);  // Define o spreading factor
+
+    if(crc_mode)    // Verifica a flag de ativação do CRC 
+    {
+        writeRegisterBit(REG_MODEM_CONFIG2, 2, 1); // Ativa o CRC (deve ser ativado no receptor também)
+    }else
+    {
+        writeRegisterBit(REG_MODEM_CONFIG2, 2, 0); // Desativa o CRC
+    }
+    // O spreading factor utiliza bits do registrador REG_MODEM_CONFIG2
+    // Esse registrador também é responsável por outros parametros (TxContinuousMode por exemplo)
+    // Eles foram deixados como padrão nesse primeiro momento, mas podem precisar ser alterados depois
+
+    if(ldro)    // Checa se o LowDataRateOptimize deve ser ligado
+    {
+        writeRegisterBit(REG_MODEM_CONFIG3, 3, 1); // ativa o LDRO
+    }else{
+
+        writeRegisterBit(REG_MODEM_CONFIG3, 3, 0); // desativa o LDRO
+    }
+
+    if(payload_len < 256 && payload_len > 0) // Verifica se o tamanho do payload está entre 1 e 255
+    {
+        writeRegister(REG_PAYLOAD_LENGTH, payload_len); // Escreve o valor decimal diretamente no registrador do payload
+
+    }else{ // Se o valor não estiver fora do limite ele será definido como 255 bytes que é o máximo
+        printf("\n Valor de tamanho do payload inválido, o valor será definido como 255 bytes");
+        writeRegister(REG_PAYLOAD_LENGTH, 255);
+    }
+
+    // Configura o preâmbulo de acordo com a variável global
+    if (preamble_len > 0) {
+
+        writeRegister(REG_PREAMBLE_MSB, (preamble_len >> 8) & 0xFF);
+        writeRegister(REG_PREAMBLE_LSB, preamble_len & 0xFF);
+
+    } else {
+
+        printf("\nValor de preâmbulo inválido, será definido como 8 (default)");
+
+        writeRegister(REG_PREAMBLE_MSB, 0x00);
+        writeRegister(REG_PREAMBLE_LSB, 0x08);
+    }
+
+    setMode(2); // Coloca em modo stand by (talvez essa função deva ser chamada logo depois de configurar como LoRa na linha 312)
+
 }
