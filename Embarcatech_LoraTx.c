@@ -6,9 +6,9 @@
 #include "hardware/gpio.h"
 
 #include "lib/aht20.h"
-#include "lib/alerts.h"
+#include "lib/alerts.h"     
 #include "lib/bmp280.h"
-#include "lib/payload.h"
+#include "lib/payload.h"    // Esse payload é do html (não está sendo utilizado)
 #include "lib/spi_funcs.h"
 #include "lib/ssd1306.h"
 #include "lib/lora.h"
