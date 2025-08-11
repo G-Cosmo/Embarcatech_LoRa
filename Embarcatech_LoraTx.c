@@ -18,11 +18,13 @@
 // Configurações do SPI
 #define MOSI_PIN 19
 #define MISO_PIN 16
-#define SPI_SCL_PIN 18
+#define SPI_SCL_PIN 18 // pino do clock
 #define CSN_PIN 17  //chip select
 #define BAUD_RATE 500*1000 //define o baud rate como 0,5 MHZ
 
+// ATENÇÃO
 #define RST_PIN 20 // ESSE PINO TEM QUE SER MUDADO PARA O PINO DE RESET CORRETO
+// ATENÇÃO
 
 // Configurações da I2C do display
 #define I2C_PORT_DISP i2c1
@@ -47,6 +49,15 @@ AHT20_data_t AHT20_data;
 BMP280_data_t BMP280_data;
 int32_t raw_temp_bmp;
 int32_t raw_pressure;
+
+// Estrutura para representar o payload
+typedef struct {
+    float temp_aht20;      // 4 bytes
+    float humidity_aht20;  // 4 bytes
+    float temp_bmp280;     // 4 bytes
+    float pressure_bmp280; // 4 bytes
+    uint8_t checksum;      // 1 byte
+} sensor_payload_t;  
 
 uint32_t last_sensor_read = 0;
 
@@ -87,6 +98,7 @@ void gpio_irq_handler(uint gpio, uint32_t events){
 
 void setFrequency(double Frequency);
 void setLora();
+void sendSensorData();
 
 int main()
 {
@@ -275,9 +287,10 @@ int main()
             //     ssd1306_draw_string(&ssd, ip_str, 4, 34, false);
             //     break;
         }
+
+        sendSensorData(); // Função que faz o envio do payload
     }
 }
-
 
 // Definir frequência de operação
 void setFrequency(double Frequency)
@@ -343,10 +356,10 @@ void setLora()
 
     }else
     {
-        writeRegisterBit(REG_MODEM_CONFIG, 0, 1);   // Desativa o implicit header mode
+        writeRegisterBit(REG_MODEM_CONFIG, 0, 0);   // Desativa o implicit header mode
     }
 
-    setSF(sf);  // Define o spreading factor
+    setSF(sf);  // Define o spreading factor (O caso do sf 6 não foi tratado, portanto, ele só pode ser de 7 até 12)
 
     if(crc_mode)    // Verifica a flag de ativação do CRC 
     {
@@ -390,6 +403,69 @@ void setLora()
         writeRegister(REG_PREAMBLE_LSB, 0x08);
     }
 
+    // Configurar potência de transmissão
+    writeRegister(REG_PA_CONFIG, PA_MED_BOOST); // ou PA_MAX_BOOST se precisar de mais alcance
+
+    // Configurar DIO0 para TxDone (modo TX) e RxDone (modo RX)
+    writeRegister(REG_DIO_MAPPING_1, 0x40); // DIO0 = TxDone/RxDone
+
     setMode(2); // Coloca em modo stand by (talvez essa função deva ser chamada logo depois de configurar como LoRa na linha 312)
 
+}
+
+void sendSensorData() {
+
+    sensor_payload_t payload; // Cria uma estrutura do payload
+    
+    // Preparar dados
+    payload.temp_aht20 = AHT20_data.temperature;
+    payload.humidity_aht20 = AHT20_data.humidity;
+    payload.temp_bmp280 = BMP280_data.temperature;
+    payload.pressure_bmp280 = BMP280_data.pressure;
+    
+    // Calcular checksum simples
+    uint8_t *data = (uint8_t*)&payload;
+    uint8_t checksum = 0;
+    for(int i = 0; i < sizeof(sensor_payload_t) - 1; i++) {
+        checksum ^= data[i];
+    }
+    payload.checksum = checksum;
+    
+    // Enviar via LoRa
+    setMode(2); // Standby
+    
+    // Limpar IRQ flags
+    writeRegister(REG_IRQ_FLAGS, 0xFF);
+    
+    // Configurar FIFO
+    writeRegister(REG_FIFO_TX_BASE_AD, 0x80);   // Garante que o endereço base seja 0x80
+    writeRegister(REG_FIFO_ADDR_PTR, 0x80); // Escreve o endereço base 0x80 no FIFO para transmitir
+
+        
+    // A função setLora() já define o tamanho do payload de acordo com a variável global
+    // No entanto, a linha abaixo reescreve o tamanho do payload para garantir que seja exatamente do tamanho da estrutura
+    // Isso evita que um tamanho maior do que o necessário seja alocado, mas essa linha pode ser comentada
+    writeRegister(REG_PAYLOAD_LENGTH, sizeof(sensor_payload_t)); 
+
+    // Escrever payload no FIFO
+    uint8_t *payload_bytes = (uint8_t*)&payload;
+    for(int i = 0; i < sizeof(sensor_payload_t); i++) {
+        writeRegister(REG_FIFO, payload_bytes[i]);
+    }
+
+    // Iniciar transmissão
+    setMode(4); // TX mode
+    
+    // Aguardar transmissão completar
+    while(!(readRegister(REG_IRQ_FLAGS) & 0x08)) {
+        sleep_ms(1);
+    }
+    
+    // Limpar flag TxDone
+    writeRegister(REG_IRQ_FLAGS, 0x08);
+    
+    // Voltar para standby
+    setMode(2);
+    
+    printf("Dados enviados via LoRa!\n");
 }
