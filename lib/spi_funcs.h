@@ -57,7 +57,7 @@ static uint8_t readRegister(uint8_t addr)
 
     sleep_ms(1); // Delay de 1 ms
 
-    printf("READ %02X\n", buf[0]); // Imprimir resultado obtido pela leitura do registrador
+    //printf("READ %02X\n", buf[0]); // Imprimir resultado obtido pela leitura do registrador
     return buf[0]; // Retornar resultado do valor armazenado no registrador
 }
 

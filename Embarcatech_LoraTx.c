@@ -20,6 +20,7 @@
 #define MISO_PIN 16
 #define SPI_SCL_PIN 18 // pino do clock
 #define CSN_PIN 17  //chip select
+#define PIN_DIO0 8
 #define BAUD_RATE 500*1000 //define o baud rate como 0,5 MHZ
 
 // ATENÇÃO
@@ -103,7 +104,7 @@ void sendSensorData();
 int main()
 {
     stdio_init_all();
-    sleep_ms(1000);   
+    sleep_ms(2000);   
     
     // Iniciando os botões
     gpio_init(BUTTON_A);
@@ -166,13 +167,23 @@ int main()
     gpio_set_dir(RST_PIN, GPIO_OUT);
     gpio_put(RST_PIN, 1);
 
+    // DIO0 - input
+    gpio_init(PIN_DIO0);
+    gpio_set_dir(PIN_DIO0, GPIO_IN);
+
+    printf("\n Check 1");
+
     setLora();
+
+    printf("\n Check Lora"); 
+
+    
 
     while (true) {
 
         uint32_t current_sensor_read = to_us_since_boot(get_absolute_time());
 
-        if(current_sensor_read-last_sensor_read > 2000000){
+        //if(current_sensor_read-last_sensor_read > 2000000){
 
             last_sensor_read = current_sensor_read;
             // Leitura do BMP280
@@ -193,7 +204,11 @@ int main()
                 printf("Erro na leitura do AHT10!\n");
             }
             printf("\n\n");
-        }
+
+            BMP280_data.pressure = pressure/1000.0f;
+            BMP280_data.temperature = temperature/100.0f;
+
+        //}
 
         // Strings com os valores
         char str_tmp_aht[5];
@@ -289,6 +304,8 @@ int main()
         }
 
         sendSensorData(); // Função que faz o envio do payload
+
+        sleep_ms(2000);
     }
 }
 
@@ -306,7 +323,7 @@ void setFrequency(double Frequency)
     writeRegister(REG_FRF_MSB, (FrequencyValue >> 16) & 0xFF); // Escrita no registrador RegFrMsb (0x06)
     writeRegister(REG_FRF_MID, (FrequencyValue >> 8) & 0xFF); // Escrita no registrador RegFrMid (0x07)
     writeRegister(REG_FRF_LSB, FrequencyValue & 0xFF); // Escrita no registrador RegFrLsb (0x08)
-    printf("Impressão de valor binário da frequência:\n");
+    //printf("Impressão de valor binário da frequência:\n");
 
     // imprimir_binario(FrequencyValue); // Imprimir o valor binário de 32 bits - FrequencyValue
     // printf("\n");
@@ -322,9 +339,12 @@ void setLora()
 {
     setMode(1); // Coloca o registrador RegOpMode no modo sleep, os modos estão descritos em comentários na função
 
+    printf("\n RegOpMode:");
+    readRegister(REG_OPMODE);
+
     writeRegisterBit(REG_OPMODE, 7, 1); // Escreve o valor 1 no bit 7 de REG_OPMODE sem alterar os outros valores (coloca no modo LoRa)
     writeRegisterBit(REG_OPMODE, 6, 0); // Desativa o acesso ao registrador compartilhado com o modo FSK
-    writeRegisterBit(REG_OPMODE, 5, 1); // Ativa o modo de alta frequência
+    writeRegisterBit(REG_OPMODE, 5, 1); // Ativa o modo de alta frequência (permitir configuração pelo usuario posteriormente)
 
     setFrequency(freq); // Define a frequencia com a função já feita pelo prof
 
@@ -372,6 +392,17 @@ void setLora()
     // Esse registrador também é responsável por outros parametros (TxContinuousMode por exemplo)
     // Tirando o do CRC, eles foram deixados como padrão nesse primeiro momento, mas podem precisar ser alterados depois
 
+    // Escreve 0x03 nos três ultimos bits do registrador RegDetectOptmize (Lora detection optmize)
+    // Esse valor (0x03) considera apenas os casos de espreading factor 7 até 12
+    // O CASO DO SPREADING FACTOR 6 AINDA PRECISA SER TRATADO
+    writeRegisterField(REG_DETECT_OPT, 2, 3, 0x03);
+
+    // Escreve 0x0A no registrador RegDetectionThreshold (Lora detection threshold)
+    // Esse valor (0x0a) considera apenas os casos de espreading factor 7 até 12
+    // O CASO DO SPREADING FACTOR 6 AINDA PRECISA SER TRATADO
+    writeRegisterField(REG_DETECTION_THRESHOLD, 7, 8, 0x0A);
+
+
     if(ldro)   // Checa se o LowDataRateOptimize deve ser ligado
     {
         writeRegisterBit(REG_MODEM_CONFIG3, 3, 1); // ativa o LDRO
@@ -408,8 +439,12 @@ void setLora()
 
     // Configurar DIO0 para TxDone (modo TX) e RxDone (modo RX)
     writeRegister(REG_DIO_MAPPING_1, 0x40); // DIO0 = TxDone/RxDone
+	writeRegister(REG_DIO_MAPPING_2,0x00);
+    
 
     setMode(2); // Coloca em modo stand by (talvez essa função deva ser chamada logo depois de configurar como LoRa na linha 312)
+
+    printf("\n Configuração realizada, modo stand by ativo.");
 
 }
 
