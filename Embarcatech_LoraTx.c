@@ -23,9 +23,8 @@
 #define PIN_DIO0 8
 #define BAUD_RATE 500*1000 //define o baud rate como 0,5 MHZ
 
-// ATENÇÃO
-#define RST_PIN 20 // ESSE PINO TEM QUE SER MUDADO PARA O PINO DE RESET CORRETO
-// ATENÇÃO
+#define RST_PIN 20
+
 
 // Configurações da I2C do display
 #define I2C_PORT_DISP i2c1
@@ -76,7 +75,7 @@ double freq = 915; // frequencia em MHz
 
 // -> ISR dos Botões =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 // Tratamento de interrupções 
-int display_page = 1;
+int volatile display_page = 1;
 int num_pages = 4;
 uint32_t last_isr_time = 0;
 void gpio_irq_handler(uint gpio, uint32_t events){
@@ -176,8 +175,6 @@ int main()
     setLora();
 
     printf("\n Check Lora"); 
-
-    
 
     while (true) {
 
@@ -302,6 +299,8 @@ int main()
             //     ssd1306_draw_string(&ssd, ip_str, 4, 34, false);
             //     break;
         }
+
+        ssd1306_send_data(&ssd);
 
         sendSensorData(); // Função que faz o envio do payload
 
@@ -473,14 +472,17 @@ void sendSensorData() {
     writeRegister(REG_IRQ_FLAGS, 0xFF);
     
     // Configurar FIFO
-    writeRegister(REG_FIFO_TX_BASE_AD, 0x80);   // Garante que o endereço base seja 0x80
-    writeRegister(REG_FIFO_ADDR_PTR, 0x80); // Escreve o endereço base 0x80 no FIFO para transmitir
+    writeRegister(REG_FIFO_TX_BASE_AD, 0x00);   // Define o endereço inicial da partição da FIFO em que os dados para transmissão serão armazenados (bits 128 até 255)
+    writeRegister(REG_FIFO_ADDR_PTR, 0x00); // Desloca o ponteiro da FIFO para a posição inicial correspondentes aos dados de transmissão
 
         
     // A função setLora() já define o tamanho do payload de acordo com a variável global
     // No entanto, a linha abaixo reescreve o tamanho do payload para garantir que seja exatamente do tamanho da estrutura
     // Isso evita que um tamanho maior do que o necessário seja alocado, mas essa linha pode ser comentada
     writeRegister(REG_PAYLOAD_LENGTH, sizeof(sensor_payload_t)); 
+
+    printf("\n Tamanho desejado do payload: %d, Tamanho armazenado:", sizeof(sensor_payload_t));
+    readRegister(REG_PAYLOAD_LENGTH);
 
     // Escrever payload no FIFO
     uint8_t *payload_bytes = (uint8_t*)&payload;
@@ -498,7 +500,11 @@ void sendSensorData() {
     
     // Limpar flag TxDone
     writeRegister(REG_IRQ_FLAGS, 0x08);
-    
+
+    uint8_t bytes_actually_sent = readRegister(REG_PAYLOAD_LENGTH); // 0x22
+    printf("Configurado para enviar: %d bytes\n", sizeof(sensor_payload_t));
+    printf("Efetivamente enviado (REG_PAYLOAD_LENGHT): %d bytes\n", bytes_actually_sent);
+
     // Voltar para standby
     setMode(2);
     

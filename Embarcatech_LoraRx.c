@@ -16,8 +16,8 @@
 #define CSN_PIN 17
 #define BAUD_RATE 500*1000
 
-// Definir para compatibilidade com spi_funcs.h
-#define PICO_DEFAULT_SPI_CSN_PIN CSN_PIN
+// // Definir para compatibilidade com spi_funcs.h
+// #define PICO_DEFAULT_SPI_CSN_PIN CSN_PIN
 
 // Pino de Reset
 #define RST_PIN 20
@@ -119,7 +119,7 @@ int main() {
     ssd1306_send_data(&ssd);
 
     // Inicializando o SPI
-    spi_init(spi_default, BAUD_RATE);
+    spi_init(spi_default, BAUD_RATE);   // spi0
     gpio_set_function(MISO_PIN, GPIO_FUNC_SPI);
     gpio_set_function(SPI_SCL_PIN, GPIO_FUNC_SPI);
     gpio_set_function(MOSI_PIN, GPIO_FUNC_SPI);
@@ -232,7 +232,7 @@ void setLoRaRX() {
         writeRegisterBit(REG_MODEM_CONFIG, 0, 0); // Explicit header
     }
     
-    // Configurar spreading factor
+    // Configurar spreading factor (tratar sf6)
     setSF(sf);
     
     // Configurar CRC
@@ -260,15 +260,15 @@ void setLoRaRX() {
         writeRegister(REG_PREAMBLE_LSB, preamble_len & 0xFF);
     }
     
-    // Configurar LNA para máxima sensibilidade
+    // Configurar LNA para máxima sensibilidade  (entender melhor)
     writeRegister(REG_LNA, LNA_MAX_GAIN);
     
     // Configurar DIO0 para RxDone
     writeRegister(REG_DIO_MAPPING_1, 0x00); // DIO0 = RxDone
     
     // Configurar FIFO
-    writeRegister(REG_FIFO_RX_BASE_AD, 0x00);
-    writeRegister(REG_FIFO_ADDR_PTR, 0x00);
+     writeRegister(REG_FIFO_TX_BASE_AD, 0x00);   // Define o endereço inicial da partição da FIFO em que os dados de recepção serão armazenados (bits 0 até 128)
+    writeRegister(REG_FIFO_ADDR_PTR, 0x00); // Desloca o ponteiro da FIFO para a posição inicial correspondentes aos dados de recepção
     
     // Limpar flags de interrupção
     writeRegister(REG_IRQ_FLAGS, 0xFF);
@@ -279,18 +279,21 @@ void setLoRaRX() {
     printf("LoRa configurado para recepcao!\n");
 }
 
+// 0010 0000
+//          
+
 bool receiveData() {
     // Verificar se recebeu dados (RxDone flag)
     uint8_t irq_flags = readRegister(REG_IRQ_FLAGS);
     
-    if(irq_flags & 0x40) { // RxDone
+    if(irq_flags & 0x40) { // RxDone (verifica se dados foram recebidos)
         printf("Pacote recebido!\n");
         
         // Verificar se há erro de CRC
         if(irq_flags & 0x20) {
             printf("Erro de CRC detectado!\n");
             writeRegister(REG_IRQ_FLAGS, 0xFF); // Limpar flags
-            return false;
+            //return false;
         }
         
         // Ler número de bytes recebidos

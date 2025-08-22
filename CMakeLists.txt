@@ -18,13 +18,13 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(PICO_BOARD pico_w CACHE STRING "Board type")
 include(pico_sdk_import.cmake)
-project(Embarcatech_LoraTx C CXX ASM) # Tem que mudar para Embarcatech_LoraRx quando for usar o receptor (a linha 38 também tem que mudar)
+project(Embarcatech_LoraRx C CXX ASM) # Tem que mudar para Embarcatech_LoraRx quando for usar o receptor (a linha 38 também tem que mudar)
 pico_sdk_init()
   
 
 
 add_executable(${PROJECT_NAME}  
-        Embarcatech_LoraTx.c
+        Embarcatech_LoraRx.c
         lib/aht20.c
         lib/alerts.c    
         lib/bmp280.c
