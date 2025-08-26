@@ -39,7 +39,6 @@ typedef struct {
     float humidity_aht20;  // 4 bytes
     float temp_bmp280;     // 4 bytes
     float pressure_bmp280; // 4 bytes
-    uint8_t checksum;      // 1 byte
 } sensor_payload_t;
 
 // Configurações do RX (devem ser iguais ao TX)
@@ -153,7 +152,7 @@ int main() {
                 checksum ^= data[i];
             }
             
-            if(checksum == received_data.checksum) {
+            
                 valid_packets++;
                 printf("=== DADOS RECEBIDOS ===\n");
                 printf("Temp AHT20: %.2f°C\n", received_data.temp_aht20);
@@ -163,9 +162,7 @@ int main() {
                 printf("Checksum: OK\n");
                 printf("Pacotes: %lu/%lu\n", valid_packets, total_packets);
                 printf("=======================\n");
-            } else {
-                printf("Erro de checksum! Pacote descartado.\n");
-            }
+            
         }
         
         // Atualizar display
@@ -225,22 +222,32 @@ void setLoRaRX() {
         break;
     }
     
-    // Configurar header mode
+    // CRÍTICO: Configurar header mode (deve ser igual ao TX)
     if(ih) {
         writeRegisterBit(REG_MODEM_CONFIG, 0, 1); // Implicit header
+        // No modo implícito, DEVE configurar o payload length
+        writeRegister(REG_PAYLOAD_LENGTH, sizeof(sensor_payload_t));
+        printf("Modo Implicit Header - Payload Length: %d\n", sizeof(sensor_payload_t));
     } else {
         writeRegisterBit(REG_MODEM_CONFIG, 0, 0); // Explicit header
+        printf("Modo Explicit Header\n");
     }
     
-    // Configurar spreading factor (tratar sf6)
+    // Configurar spreading factor
     setSF(sf);
     
-    // Configurar CRC
+    // Configurar CRC (DEVE ser igual ao TX)
     if(crc_mode) {
         writeRegisterBit(REG_MODEM_CONFIG2, 2, 1);
+        printf("CRC habilitado\n");
     } else {
         writeRegisterBit(REG_MODEM_CONFIG2, 2, 0);
+        printf("CRC desabilitado\n");
     }
+    
+    // Configurar detect optimize e threshold
+    writeRegisterField(REG_DETECT_OPT, 2, 3, 0x03);
+    writeRegisterField(REG_DETECTION_THRESHOLD, 7, 8, 0x0A);
     
     // Configurar LDRO
     if(ldro) {
@@ -249,73 +256,111 @@ void setLoRaRX() {
         writeRegisterBit(REG_MODEM_CONFIG3, 3, 0);
     }
     
-    // Configurar tamanho do payload (para modo explícito)
-    if(!ih && payload_len > 0 && payload_len < 256) {
-        writeRegister(REG_PAYLOAD_LENGTH, payload_len);
-    }
-    
     // Configurar preâmbulo
     if (preamble_len > 0) {
         writeRegister(REG_PREAMBLE_MSB, (preamble_len >> 8) & 0xFF);
         writeRegister(REG_PREAMBLE_LSB, preamble_len & 0xFF);
     }
     
-    // Configurar LNA para máxima sensibilidade  (entender melhor)
+    // Configurar LNA
     writeRegister(REG_LNA, LNA_MAX_GAIN);
     
     // Configurar DIO0 para RxDone
     writeRegister(REG_DIO_MAPPING_1, 0x00); // DIO0 = RxDone
     
     // Configurar FIFO
-     writeRegister(REG_FIFO_TX_BASE_AD, 0x00);   // Define o endereço inicial da partição da FIFO em que os dados de recepção serão armazenados (bits 0 até 128)
-    writeRegister(REG_FIFO_ADDR_PTR, 0x00); // Desloca o ponteiro da FIFO para a posição inicial correspondentes aos dados de recepção
+    writeRegister(REG_FIFO_RX_BASE_AD, 0x00);
+    writeRegister(REG_FIFO_ADDR_PTR, 0x00);
     
     // Limpar flags de interrupção
     writeRegister(REG_IRQ_FLAGS, 0xFF);
+    
+    // DEBUG: Imprimir configurações importantes
+    printf("=== CONFIGURAÇÕES RX ===\n");
+    printf("Payload Length: %d\n", readRegister(REG_PAYLOAD_LENGTH));
+    printf("Modem Config 1: 0x%02X\n", readRegister(REG_MODEM_CONFIG));
+    printf("Modem Config 2: 0x%02X\n", readRegister(REG_MODEM_CONFIG2));
+    printf("Modem Config 3: 0x%02X\n", readRegister(REG_MODEM_CONFIG3));
+    printf("========================\n");
     
     // Colocar em modo de recepção contínua
     setMode(6); // RXCONTINUOUS
     
     printf("LoRa configurado para recepcao!\n");
 }
-
-// 0010 0000
-//          
+  
 
 bool receiveData() {
     // Verificar se recebeu dados (RxDone flag)
     uint8_t irq_flags = readRegister(REG_IRQ_FLAGS);
     
-    if(irq_flags & 0x40) { // RxDone (verifica se dados foram recebidos)
-        printf("Pacote recebido!\n");
+    // DEBUG: Mostrar todas as flags
+    printf("IRQ Flags: 0x%02X\n", irq_flags);
+    
+    if(irq_flags & 0x40) { // RxDone (bit 6)
+        printf("=== PACOTE DETECTADO ===\n");
         
-        // Verificar se há erro de CRC
-        if(irq_flags & 0x20) {
-            printf("Erro de CRC detectado!\n");
+        // Verificar se há erro de CRC ANTES de processar
+        if(irq_flags & 0x20) { // CRC Error (bit 5)
+            printf("ERRO: CRC inválido!\n");
+            printf("IRQ Flags detalhadas: 0x%02X\n", irq_flags);
+            
+            // Ainda assim, vamos verificar quantos bytes foram recebidos
+            uint8_t nb_bytes = readRegister(REG_RX_NB_BYTES);
+            printf("Bytes recebidos mesmo com CRC erro: %d\n", nb_bytes);
+            
             writeRegister(REG_IRQ_FLAGS, 0xFF); // Limpar flags
-            //return false;
+            return false;
+        }
+        
+        // Verificar se há erro de header
+        if(irq_flags & 0x10) { // Valid Header (bit 4) - deve estar em 1
+            printf("Header válido detectado\n");
+        } else {
+            printf("AVISO: Header pode estar inválido\n");
         }
         
         // Ler número de bytes recebidos
         uint8_t nb_bytes = readRegister(REG_RX_NB_BYTES);
-        printf("Bytes recebidos: %d\n", nb_bytes);
+        printf("Bytes efetivamente recebidos: %d\n", nb_bytes);
+        printf("Bytes esperados: %d\n", sizeof(sensor_payload_t));
+        
+        // Ler informações adicionais para debug
+        uint8_t current_addr = readRegister(REG_FIFO_RX_CURRENT_ADDR);
+        uint8_t payload_len_reg = readRegister(REG_PAYLOAD_LENGTH);
+        
+        printf("=== DEBUG DETALHADO ===\n");
+        printf("FIFO RX Current Addr: 0x%02X\n", current_addr);
+        printf("Payload Length Register: %d\n", payload_len_reg);
+        printf("Modem Status: 0x%02X\n", readRegister(0x18));
         
         // Verificar se o tamanho está correto
         if(nb_bytes != sizeof(sensor_payload_t)) {
-            printf("Tamanho incorreto! Esperado: %d, Recebido: %d\n", 
+            printf("ERRO: Tamanho incorreto!\n");
+            printf("Esperado: %d bytes, Recebido: %d bytes\n", 
                    sizeof(sensor_payload_t), nb_bytes);
+            
+            // Tentar ler os dados mesmo assim para debug
+            printf("Tentando ler os %d bytes recebidos:\n", nb_bytes);
+            writeRegister(REG_FIFO_ADDR_PTR, current_addr);
+            for(int i = 0; i < nb_bytes && i < 20; i++) {
+                uint8_t byte = readRegister(REG_FIFO);
+                printf("Byte %d: 0x%02X (%d)\n", i, byte, byte);
+            }
+            
             writeRegister(REG_IRQ_FLAGS, 0xFF);
             return false;
         }
         
         // Ler endereço atual do FIFO
-        uint8_t fifo_addr = readRegister(REG_FIFO_RX_CURRENT_ADDR);
-        writeRegister(REG_FIFO_ADDR_PTR, fifo_addr);
+        writeRegister(REG_FIFO_ADDR_PTR, current_addr);
         
         // Ler dados do FIFO
         uint8_t *payload_bytes = (uint8_t*)&received_data;
-        for(int i = 0; i < nb_bytes; i++) {
+        printf("Lendo payload byte a byte:\n");
+        for(int i = 0; i < sizeof(sensor_payload_t); i++) {
             payload_bytes[i] = readRegister(REG_FIFO);
+            printf("Byte %d: 0x%02X\n", i, payload_bytes[i]);
         }
         
         // Limpar flags de interrupção
@@ -324,6 +369,14 @@ bool receiveData() {
         // Ler RSSI do último pacote
         int16_t rssi = readRegister(0x1A) - 164; // Para frequência > 868MHz
         printf("RSSI: %d dBm\n", rssi);
+        
+        // DEBUG: Mostrar os floats recebidos
+        printf("=== DADOS DECODIFICADOS ===\n");
+        printf("Temp AHT20: %.2f°C\n", received_data.temp_aht20);
+        printf("Umidade AHT20: %.2f%%\n", received_data.humidity_aht20);
+        printf("Temp BMP280: %.2f°C\n", received_data.temp_bmp280);
+        printf("Pressão BMP280: %.3f kPa\n", received_data.pressure_bmp280);
+        printf("========================\n");
         
         return true;
     }

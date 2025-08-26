@@ -50,19 +50,25 @@ BMP280_data_t BMP280_data;
 int32_t raw_temp_bmp;
 int32_t raw_pressure;
 
+// buffers para impressão dos dados dos sensores
+char str_tmp_aht[5];
+char str_humi_aht[5];
+char str_press_bmp[5];
+char str_temp_bmp[5];
+
 // Estrutura para representar o payload
-typedef struct {
+typedef struct __attribute__ ((packed)) {
     float temp_aht20;      // 4 bytes
     float humidity_aht20;  // 4 bytes
     float temp_bmp280;     // 4 bytes
     float pressure_bmp280; // 4 bytes
-    uint8_t checksum;      // 1 byte
 } sensor_payload_t;  
+
 
 uint32_t last_sensor_read = 0;
 
 // Configurações do - TX:
-uint16_t payload_len = 10; // Tamanho do payload em byte
+uint16_t payload_len = 17; // Tamanho do payload em byte
 uint16_t preamble_len = 8; // Tamanho do preâmbulo
 uint16_t sf = 7; // fator de espalhamento (Spreading Factor)
 uint16_t crc = 0; // tamanho do CRC (Cyclic Redundancy Check) em bytes (normalmente 2 bytes) (não encontrei uso para essa variável, tamanho do CRC?)
@@ -207,12 +213,6 @@ int main()
 
         //}
 
-        // Strings com os valores
-        char str_tmp_aht[5];
-        char str_humi_aht[5];
-        char str_press_bmp[5];
-        char str_temp_bmp[5];
-
         // Atualizando as strings
         sprintf(str_tmp_aht, "%.1f C", AHT20_data.temperature);
         sprintf(str_humi_aht, "%.1f %%", AHT20_data.humidity);
@@ -302,7 +302,7 @@ int main()
 
         ssd1306_send_data(&ssd);
 
-        sendSensorData(); // Função que faz o envio do payload
+        sendSensorData(str_humi_aht); // Função que faz o envio do payload
 
         sleep_ms(2000);
     }
@@ -436,8 +436,8 @@ void setLora()
     // Configurar potência de transmissão
     writeRegister(REG_PA_CONFIG, PA_MED_BOOST); // ou PA_MAX_BOOST se precisar de mais alcance
 
-    // Configurar DIO0 para TxDone (modo TX) e RxDone (modo RX)
-    writeRegister(REG_DIO_MAPPING_1, 0x40); // DIO0 = TxDone/RxDone
+    // Configurar DIO0 para TxDone (modo TX)
+    writeRegister(REG_DIO_MAPPING_1, 0x40); // DIO0 = TxDone
 	writeRegister(REG_DIO_MAPPING_2,0x00);
     
 
@@ -448,48 +448,34 @@ void setLora()
 }
 
 void sendSensorData() {
-
-    sensor_payload_t payload; // Cria uma estrutura do payload
+    sensor_payload_t payload; // Criar estrutura do payload
     
-    // Preparar dados
+    // Preencher o payload com os dados dos sensores
     payload.temp_aht20 = AHT20_data.temperature;
     payload.humidity_aht20 = AHT20_data.humidity;
     payload.temp_bmp280 = BMP280_data.temperature;
     payload.pressure_bmp280 = BMP280_data.pressure;
     
-    // Calcular checksum simples
-    uint8_t *data = (uint8_t*)&payload;
-    uint8_t checksum = 0;
-    for(int i = 0; i < sizeof(sensor_payload_t) - 1; i++) {
-        checksum ^= data[i];
-    }
-    payload.checksum = checksum;
-    
-    // Enviar via LoRa
     setMode(2); // Standby
     
     // Limpar IRQ flags
     writeRegister(REG_IRQ_FLAGS, 0xFF);
     
     // Configurar FIFO
-    writeRegister(REG_FIFO_TX_BASE_AD, 0x00);   // Define o endereço inicial da partição da FIFO em que os dados para transmissão serão armazenados (bits 128 até 255)
-    writeRegister(REG_FIFO_ADDR_PTR, 0x00); // Desloca o ponteiro da FIFO para a posição inicial correspondentes aos dados de transmissão
-
-        
-    // A função setLora() já define o tamanho do payload de acordo com a variável global
-    // No entanto, a linha abaixo reescreve o tamanho do payload para garantir que seja exatamente do tamanho da estrutura
-    // Isso evita que um tamanho maior do que o necessário seja alocado, mas essa linha pode ser comentada
-    writeRegister(REG_PAYLOAD_LENGTH, sizeof(sensor_payload_t)); 
-
-    printf("\n Tamanho desejado do payload: %d, Tamanho armazenado:", sizeof(sensor_payload_t));
-    readRegister(REG_PAYLOAD_LENGTH);
-
-    // Escrever payload no FIFO
+    writeRegister(REG_FIFO_TX_BASE_AD, 0x80);
+    writeRegister(REG_FIFO_ADDR_PTR, 0x80);
+    
+    // Definir tamanho correto do payload
+    writeRegister(REG_PAYLOAD_LENGTH, sizeof(sensor_payload_t));
+    
+    printf("\nTamanho do payload: %d bytes\n", sizeof(sensor_payload_t));
+    
+    // Escrever payload no FIFO byte a byte
     uint8_t *payload_bytes = (uint8_t*)&payload;
     for(int i = 0; i < sizeof(sensor_payload_t); i++) {
         writeRegister(REG_FIFO, payload_bytes[i]);
     }
-
+    
     // Iniciar transmissão
     setMode(4); // TX mode
     
@@ -500,13 +486,13 @@ void sendSensorData() {
     
     // Limpar flag TxDone
     writeRegister(REG_IRQ_FLAGS, 0x08);
-
-    uint8_t bytes_actually_sent = readRegister(REG_PAYLOAD_LENGTH); // 0x22
-    printf("Configurado para enviar: %d bytes\n", sizeof(sensor_payload_t));
-    printf("Efetivamente enviado (REG_PAYLOAD_LENGHT): %d bytes\n", bytes_actually_sent);
-
+    
     // Voltar para standby
     setMode(2);
     
     printf("Dados enviados via LoRa!\n");
+    printf("Temp AHT20: %.2f°C\n", payload.temp_aht20);
+    printf("Umid AHT20: %.2f%%\n", payload.humidity_aht20);
+    printf("Temp BMP280: %.2f°C\n", payload.temp_bmp280);
+    printf("Press BMP280: %.3f kPa\n", payload.pressure_bmp280);
 }
