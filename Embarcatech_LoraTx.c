@@ -98,6 +98,8 @@ void gpio_irq_handler(uint gpio, uint32_t events){
 void setFrequency(double Frequency);
 void setLora();
 void sendSensorData();
+void setLoRaTX();
+void sendStaticByte();
 
 int main()
 {
@@ -171,138 +173,14 @@ int main()
 
     printf("\n Check 1");
 
-    setLora();
+    // setLora();
 
     printf("\n Check Lora"); 
+    setLoRaTX(); // Nova função para configurar modo TX
 
     while (true) {
-
-        uint32_t current_sensor_read = to_us_since_boot(get_absolute_time());
-
-        //if(current_sensor_read-last_sensor_read > 2000000){
-
-            last_sensor_read = current_sensor_read;
-            // Leitura do BMP280
-            bmp280_read_raw(I2C_PORT, &raw_temp_bmp, &raw_pressure);
-            int32_t temperature = bmp280_convert_temp(raw_temp_bmp, &params);
-            int32_t pressure = bmp280_convert_pressure(raw_pressure, raw_temp_bmp, &params);
-
-            printf("[DEBUG] Leitura de sensores\n");
-            printf("BMP280.pressure = %.3f kPa\n", BMP280_data.pressure);
-            printf("BMP280.temperature = %.2f C\n", BMP280_data.temperature);
-
-            // Leitura do AHT20
-            if (aht20_read(I2C_PORT, &AHT20_data)){
-                printf("AHT20_data.temperature = %.2f C\n", AHT20_data.temperature);
-                printf("AHT20_data.humidity = %.2f %%\n", AHT20_data.humidity);
-            }
-            else{
-                printf("Erro na leitura do AHT10!\n");
-            }
-            printf("\n\n");
-
-            BMP280_data.pressure = pressure/1000.0f;
-            BMP280_data.temperature = temperature/100.0f;
-
-        //}
-
-        // Strings com os valores
-        char str_tmp_aht[5];
-        char str_humi_aht[5];
-        char str_press_bmp[5];
-        char str_temp_bmp[5];
-
-        // Atualizando as strings
-        sprintf(str_tmp_aht, "%.1f C", AHT20_data.temperature);
-        sprintf(str_humi_aht, "%.1f %%", AHT20_data.humidity);
-        sprintf(str_press_bmp, "%.1f kPa", BMP280_data.pressure);
-        sprintf(str_temp_bmp, "%.1f C", BMP280_data.temperature);
-
-        // Atualiza o Display LCD
-        // Frame que será reutilizado
-        ssd1306_fill(&ssd, false);
-        ssd1306_rect(&ssd, 0, 0, 128, 64, cor, !cor);
-        // Mensagem superior (Nome do projeto e vagas ocupadas/totais)
-        ssd1306_rect(&ssd, 0, 0, 128, 12, cor, cor); // Fundo preenchido
-        ssd1306_draw_string(&ssd, "DogAtmos", 4, 3, true);
-
-        switch(display_page){
-            // AHT20 - Temperatura
-            case 1:
-                ssd1306_draw_string(&ssd, "1/5", 95, 3, true);
-                ssd1306_draw_string(&ssd, "ATUAL: ", 4, 18, false);
-                ssd1306_draw_string(&ssd, str_tmp_aht, 12+7*8, 18, false);
-                ssd1306_draw_string(&ssd, "STATUS: ", 4, 28, false);
-                // Simbolo de alerta
-                // make_alert_display(sensor_alerts.aht20_temperature, 4 + 8*8, 28);
-                // // Offset atual
-                // ssd1306_draw_string(&ssd, "OFFSET: ", 4, 38, false);
-                // ssd1306_draw_string(&ssd, str_offset_tmp_aht, 4 + 8*8, 38, false);
-                // Indicação inferior
-                ssd1306_rect(&ssd, 51, 0, 128, 12, cor, cor); // Fundo preenchido
-                ssd1306_draw_string(&ssd, "AHT-TEMPERATURA", 4, 53, true);
-                break;
-
-            // AHT20 - Umidade
-            case 2:
-                ssd1306_draw_string(&ssd, "2/5", 95, 3, true);
-                ssd1306_draw_string(&ssd, "ATUAL: ", 4, 18, false);
-                ssd1306_draw_string(&ssd, str_humi_aht, 12+7*8, 18, false);
-                ssd1306_draw_string(&ssd, "STATUS: ", 4, 28, false);
-                // Simbolo de alerta
-                // make_alert_display(sensor_alerts.aht20_humidity, 4 + 8*8, 28);
-                // // Offset atual
-                // ssd1306_draw_string(&ssd, "OFFSET: ", 4, 38, false);
-                // ssd1306_draw_string(&ssd, str_offset_humi_aht, 4 + 8*8, 38, false);
-                // Indicação inferior
-                ssd1306_rect(&ssd, 51, 0, 128, 12, cor, cor); // Fundo preenchido
-                ssd1306_draw_string(&ssd, "AHT - UMIDADE", 4, 53, true);
-                break;
-
-            // BMP - Pressão
-            case 3:
-                ssd1306_draw_string(&ssd, "3/5", 95, 3, true);
-                ssd1306_draw_string(&ssd, "ATUAL: ", 4, 18, false);
-                ssd1306_draw_string(&ssd, str_press_bmp, 12+7*8, 18, false);
-                ssd1306_draw_string(&ssd, "STATUS: ", 4, 28, false);
-                // Simbolo de alerta
-                // make_alert_display(sensor_alerts.bmp280_pressure, 4 + 8*8, 28);
-                // // Offset atual
-                // ssd1306_draw_string(&ssd, "OFFSET: ", 4, 38, false);
-                // ssd1306_draw_string(&ssd, str_offset_press_bmp, 4 + 8*8, 38, false);
-                // Indicação inferior
-                ssd1306_rect(&ssd, 51, 0, 128, 12, cor, cor); // Fundo preenchido
-                ssd1306_draw_string(&ssd, "BMP - PRESSAO", 4, 53, true);
-                break;
-
-            // BMP - Temperatura
-            case 4:
-                ssd1306_draw_string(&ssd, "4/5", 95, 3, true);
-                ssd1306_draw_string(&ssd, "ATUAL: ", 4, 18, false);
-                ssd1306_draw_string(&ssd, str_temp_bmp, 12+7*8, 18, false);
-                ssd1306_draw_string(&ssd, "STATUS: ", 4, 28, false);
-                // // Simbolo de alerta
-                // make_alert_display(sensor_alerts.bmp280_temperature, 4 + 8*8, 28);
-                // // Offset atual
-                // ssd1306_draw_string(&ssd, "OFFSET: ", 4, 38, false);
-                // ssd1306_draw_string(&ssd, str_offset_temp_bmp, 4 + 8*8, 38, false);
-                // Indicação inferior
-                ssd1306_rect(&ssd, 51, 0, 128, 12, cor, cor); // Fundo preenchido
-                ssd1306_draw_string(&ssd, "BMP-TEMPERATURA", 4, 53, true);
-                break;
-
-            // Tela de IP
-            // case 5:
-            //     ssd1306_draw_string(&ssd, "5/5", 95, 3, true);
-            //     ssd1306_draw_string(&ssd, "IP do servidor", 4, 24, false);
-            //     ssd1306_draw_string(&ssd, ip_str, 4, 34, false);
-            //     break;
-        }
-
-        ssd1306_send_data(&ssd);
-
-        sendSensorData(); // Função que faz o envio do payload
-
+        sendStaticByte();
+        printf("Byte enviado!\n");
         sleep_ms(2000);
     }
 }
@@ -332,6 +210,36 @@ void setFrequency(double Frequency)
     readRegister(REG_FRF_MID);
     readRegister(REG_FRF_LSB);
 }
+
+
+
+// Teste do Gepeto
+void setLoRaTX() {
+    setMode(1); // Sleep
+    writeRegisterBit(REG_OPMODE, 7, 1); // LoRa
+    writeRegisterBit(REG_OPMODE, 6, 0); // FSK off
+    writeRegisterBit(REG_OPMODE, 5, 1); // High freq
+    setFrequency(freq);
+    setBW(bw);
+    setSF(sf);
+    writeRegisterBit(REG_MODEM_CONFIG2, 2, crc_mode ? 1 : 0);
+    writeRegister(REG_PAYLOAD_LENGTH, 1); // 1 byte
+    writeRegister(REG_DIO_MAPPING_1, 0x40); // DIO0 = TxDone
+    writeRegister(REG_FIFO_TX_BASE_AD, 0x80);
+    writeRegister(REG_FIFO_ADDR_PTR, 0x80);
+    writeRegister(REG_IRQ_FLAGS, 0xFF);
+    setMode(2); // Standby
+}
+
+void sendStaticByte() {
+    uint8_t byte = 0x42; // Valor conhecido
+    writeRegister(REG_FIFO, byte);
+    setMode(4); // TX
+    while(!(readRegister(REG_IRQ_FLAGS) & 0x08)) { sleep_ms(1); }
+    writeRegister(REG_IRQ_FLAGS, 0x08); // Limpa TxDone
+    setMode(2); // Standby
+}
+// Fim do teste do Gepeto
 
 void setLora()
 {

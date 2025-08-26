@@ -134,40 +134,17 @@ int main() {
     gpio_put(RST_PIN, 1);
 
     // Configurar LoRa para recepção
-    setLoRaRX();
+    // setLoRaRX();
     
     printf("Receptor LoRa iniciado. Aguardando dados...\n");
 
+    setLoRaRX(); // Nova função para configurar modo RX
+
     while (true) {
-        // Verificar se recebeu dados
-        if(receiveData()) {
-            data_received = true;
-            last_packet_time = to_us_since_boot(get_absolute_time());
-            total_packets++;
-            
-            // Verificar checksum
-            uint8_t *data = (uint8_t*)&received_data;
-            uint8_t checksum = 0;
-            for(int i = 0; i < sizeof(sensor_payload_t) - 1; i++) {
-                checksum ^= data[i];
-            }
-            
-            
-                valid_packets++;
-                printf("=== DADOS RECEBIDOS ===\n");
-                printf("Temp AHT20: %.2f°C\n", received_data.temp_aht20);
-                printf("Umidade AHT20: %.2f%%\n", received_data.humidity_aht20);
-                printf("Temp BMP280: %.2f°C\n", received_data.temp_bmp280);
-                printf("Pressao BMP280: %.3f kPa\n", received_data.pressure_bmp280);
-                printf("Checksum: OK\n");
-                printf("Pacotes: %lu/%lu\n", valid_packets, total_packets);
-                printf("=======================\n");
-            
+        uint8_t received;
+        if(receiveStaticByte(&received)) {
+            printf("Byte recebido: 0x%02X\n", received);
         }
-        
-        // Atualizar display
-        updateDisplay();
-        
         sleep_ms(100);
     }
 }
@@ -187,94 +164,45 @@ void setFrequency(double Frequency) {
     printf("Frequencia configurada!\n");
 }
 
+// Sugestão do Gepeto
 void setLoRaRX() {
-    printf("Configurando LoRa para recepcao...\n");
-    
-    setMode(1); // Sleep mode
-    
-    // Configurar como LoRa
-    writeRegisterBit(REG_OPMODE, 7, 1); // Modo LoRa
-    writeRegisterBit(REG_OPMODE, 6, 0); // Desativa FSK
-    writeRegisterBit(REG_OPMODE, 5, 1); // Alta frequência
-    
-    // Configurar frequência
+    setMode(1); // Sleep
+    writeRegisterBit(REG_OPMODE, 7, 1); // LoRa
+    writeRegisterBit(REG_OPMODE, 6, 0); // FSK off
+    writeRegisterBit(REG_OPMODE, 5, 1); // High freq
     setFrequency(freq);
-    
-    // Configurar largura de banda
     setBW(bw);
-    
-    // Configurar coding rate
-    switch(cr) {
-    case 1:
-        writeRegisterField(REG_MODEM_CONFIG, 3, 3, 0b001);
-        break;
-    case 2:
-        writeRegisterField(REG_MODEM_CONFIG, 3, 3, 0b010);
-        break;
-    case 3:
-        writeRegisterField(REG_MODEM_CONFIG, 3, 3, 0b011);
-        break;
-    case 4:
-        writeRegisterField(REG_MODEM_CONFIG, 3, 3, 0b100);
-        break;
-    default:
-        writeRegisterField(REG_MODEM_CONFIG, 3, 3, 0b001);
-        break;
-    }
-    
-    // Configurar header mode
-    if(ih) {
-        writeRegisterBit(REG_MODEM_CONFIG, 0, 1); // Implicit header
-    } else {
-        writeRegisterBit(REG_MODEM_CONFIG, 0, 0); // Explicit header
-    }
-    
-    // Configurar spreading factor (tratar sf6)
     setSF(sf);
-    
-    // Configurar CRC
-    if(crc_mode) {
-        writeRegisterBit(REG_MODEM_CONFIG2, 2, 1);
-    } else {
-        writeRegisterBit(REG_MODEM_CONFIG2, 2, 0);
-    }
-    
-    // Configurar LDRO
-    if(ldro) {
-        writeRegisterBit(REG_MODEM_CONFIG3, 3, 1);
-    } else {
-        writeRegisterBit(REG_MODEM_CONFIG3, 3, 0);
-    }
-    
-    // Configurar tamanho do payload (para modo explícito)
-    if(!ih && payload_len > 0 && payload_len < 256) {
-        writeRegister(REG_PAYLOAD_LENGTH, payload_len);
-    }
-    
-    // Configurar preâmbulo
-    if (preamble_len > 0) {
-        writeRegister(REG_PREAMBLE_MSB, (preamble_len >> 8) & 0xFF);
-        writeRegister(REG_PREAMBLE_LSB, preamble_len & 0xFF);
-    }
-    
-    // Configurar LNA para máxima sensibilidade  (entender melhor)
-    writeRegister(REG_LNA, LNA_MAX_GAIN);
-    
-    // Configurar DIO0 para RxDone
+    writeRegisterBit(REG_MODEM_CONFIG2, 2, crc_mode ? 1 : 0);
+    writeRegister(REG_PAYLOAD_LENGTH, 1); // 1 byte
     writeRegister(REG_DIO_MAPPING_1, 0x00); // DIO0 = RxDone
-    
-    // Configurar FIFO
-    writeRegister(REG_FIFO_RX_BASE_AD, 0x00);   // Define o endereço inicial da partição da FIFO em que os dados de recepção serão armazenados (bits 0 até 128)
-    writeRegister(REG_FIFO_ADDR_PTR, 0x00); // Desloca o ponteiro da FIFO para a posição inicial correspondentes aos dados de recepção
-    
-    // Limpar flags de interrupção
+    writeRegister(REG_FIFO_RX_BASE_AD, 0x00);
+    writeRegister(REG_FIFO_ADDR_PTR, 0x00);
     writeRegister(REG_IRQ_FLAGS, 0xFF);
-    
-    // Colocar em modo de recepção contínua
     setMode(6); // RXCONTINUOUS
-    
-    printf("LoRa configurado para recepcao!\n");
 }
+
+bool receiveStaticByte(uint8_t *byte) {
+    uint8_t irq_flags = readRegister(REG_IRQ_FLAGS);
+    if(irq_flags & 0x40) { // RxDone
+        if(irq_flags & 0x20) { // CRC error
+            writeRegister(REG_IRQ_FLAGS, 0xFF);
+            return false;
+        }
+        uint8_t nb_bytes = readRegister(REG_RX_NB_BYTES);
+        if(nb_bytes != 1) {
+            writeRegister(REG_IRQ_FLAGS, 0xFF);
+            return false;
+        }
+        uint8_t fifo_addr = readRegister(REG_FIFO_RX_CURRENT_ADDR);
+        writeRegister(REG_FIFO_ADDR_PTR, fifo_addr);
+        *byte = readRegister(REG_FIFO);
+        writeRegister(REG_IRQ_FLAGS, 0xFF);
+        return true;
+    }
+    return false;
+}
+// Fim do teste do Gepeto
 
 // 0010 0000
 //          
