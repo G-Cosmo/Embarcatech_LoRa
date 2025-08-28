@@ -153,6 +153,7 @@ int main() {
             }
             
             
+            
                 valid_packets++;
                 printf("=== DADOS RECEBIDOS ===\n");
                 printf("Temp AHT20: %.2f°C\n", received_data.temp_aht20);
@@ -162,6 +163,7 @@ int main() {
                 printf("Checksum: OK\n");
                 printf("Pacotes: %lu/%lu\n", valid_packets, total_packets);
                 printf("=======================\n");
+            
             
         }
         
@@ -269,6 +271,8 @@ void setLoRaRX() {
     writeRegister(REG_DIO_MAPPING_1, 0x00); // DIO0 = RxDone
     
     // Configurar FIFO
+    writeRegister(REG_FIFO_RX_BASE_AD, 0x00);   // Define o endereço inicial da partição da FIFO em que os dados de recepção serão armazenados (bits 0 até 128)
+    writeRegister(REG_FIFO_ADDR_PTR, 0x00); // Desloca o ponteiro da FIFO para a posição inicial correspondentes aos dados de recepção
     writeRegister(REG_FIFO_RX_BASE_AD, 0x00);
     writeRegister(REG_FIFO_ADDR_PTR, 0x00);
     
@@ -311,6 +315,7 @@ bool receiveData() {
             
             writeRegister(REG_IRQ_FLAGS, 0xFF); // Limpar flags
             return false;
+            return false;
         }
         
         // Verificar se há erro de header
@@ -320,7 +325,7 @@ bool receiveData() {
             printf("AVISO: Header pode estar inválido\n");
         }
         
-        // Ler número de bytes recebidos
+        //ler número de bytes recebidos
         uint8_t nb_bytes = readRegister(REG_RX_NB_BYTES);
         printf("Bytes efetivamente recebidos: %d\n", nb_bytes);
         printf("Bytes esperados: %d\n", sizeof(sensor_payload_t));
@@ -357,6 +362,7 @@ bool receiveData() {
         
         // Ler dados do FIFO
         uint8_t *payload_bytes = (uint8_t*)&received_data;
+        for(int i = 0; i < sizeof(sensor_payload_t); i++) {
         printf("Lendo payload byte a byte:\n");
         for(int i = 0; i < sizeof(sensor_payload_t); i++) {
             payload_bytes[i] = readRegister(REG_FIFO);

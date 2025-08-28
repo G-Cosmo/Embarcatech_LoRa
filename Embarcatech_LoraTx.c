@@ -456,24 +456,31 @@ void sendSensorData() {
     payload.temp_bmp280 = BMP280_data.temperature;
     payload.pressure_bmp280 = BMP280_data.pressure;
     
+    
+    // Enviar via LoRa
     setMode(2); // Standby
     
     // Limpar IRQ flags
     writeRegister(REG_IRQ_FLAGS, 0xFF);
     
     // Configurar FIFO
-    writeRegister(REG_FIFO_TX_BASE_AD, 0x80);
-    writeRegister(REG_FIFO_ADDR_PTR, 0x80);
-    
-    // Definir tamanho correto do payload
-    writeRegister(REG_PAYLOAD_LENGTH, sizeof(sensor_payload_t));
-    
-    printf("\nTamanho do payload: %d bytes\n", sizeof(sensor_payload_t));
-    
-    // Escrever payload no FIFO byte a byte
+    writeRegister(REG_FIFO_TX_BASE_AD, 0x80);   // Define o endereço inicial da partição da FIFO em que os dados para transmissão serão armazenados (bits 128 até 255)
+    writeRegister(REG_FIFO_ADDR_PTR, 0x80); // Desloca o ponteiro da FIFO para a posição inicial correspondentes aos dados de transmissão
+
+        
+    // A função setLora() já define o tamanho do payload de acordo com a variável global
+    // No entanto, a linha abaixo reescreve o tamanho do payload para garantir que seja exatamente do tamanho da estrutura
+    // Isso evita que um tamanho maior do que o necessário seja alocado, mas essa linha pode ser comentada
+    writeRegister(REG_PAYLOAD_LENGTH, sizeof(sensor_payload_t)); 
+
+    printf("\n Tamanho desejado do payload: %d, Tamanho armazenado:", sizeof(sensor_payload_t));
+    readRegister(REG_PAYLOAD_LENGTH);
+
+    // Escrever payload no FIFO
     uint8_t *payload_bytes = (uint8_t*)&payload;
     for(int i = 0; i < sizeof(sensor_payload_t); i++) {
         writeRegister(REG_FIFO, payload_bytes[i]);
+        printf("\n Payload bytes: %d ",payload_bytes[i]);
     }
     
     // Iniciar transmissão
