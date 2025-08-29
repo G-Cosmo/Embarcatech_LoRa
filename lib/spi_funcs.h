@@ -86,55 +86,62 @@ static void writeRegisterBit(uint8_t reg, uint8_t bitPos, uint8_t bitVal)
 // value é o valor a ser escrito, como 0b0101, por exemplo. Também pode ser usado o valor em hexadecimal ou em decimal
 // Os outros bits permanecerão inalterados, seguindo o exemplo dos bits 2..5, os bits 0..1 e 6..7 permanecerão como estavam antes da escrita
 static void writeRegisterField(uint8_t reg, uint8_t bitPos, uint8_t bitLen, uint8_t value) {
-    
-    if (bitPos > 7 || bitLen == 0 || bitLen > 8 || (bitPos + 1) < bitLen) return;
+    if (bitPos > 7 || bitLen == 0 || bitLen > 8 || (bitPos + bitLen) > 8) return;
 
     uint8_t regValue = readRegister(reg);
-
-    // Criar máscara para o campo (exemplo: se bitLen=3, mask=0b111)
-    uint8_t mask = ((1 << bitLen) - 1) << (bitPos + 1 - bitLen);
-
-    // Limpar os bits do campo
-    regValue &= ~mask;
-
-    // Colocar o valor alinhado na posição certa
-    regValue |= (value << (bitPos + 1 - bitLen)) & mask;
-
+    
+    // Criar máscara para o campo
+    uint8_t mask = ((1 << bitLen) - 1) << bitPos;
+    
+    // Limpar os bits do campo e inserir novo valor
+    regValue = (regValue & ~mask) | ((value << bitPos) & mask);
+    
     writeRegister(reg, regValue);
 }
 
 //altera apenas os 3 ultimos bits do registrador RegOpMode (muda o modo, sem mudar as outras configurações)
-static void setMode(uint opt)
+void setMode(uint8_t newMode)
 {
-    switch (opt)
-    {
-    case 1:     //sleep mode  
-        writeRegisterField(REG_OPMODE, 2, 3, 0b000);
-        break;
-    case 2:     //stdby mode   
-        writeRegisterField(REG_OPMODE, 2, 3, 0b001);
-        break;
-    case 3:     //FSTX mode
-        writeRegisterField(REG_OPMODE, 2, 3, 0b010);
-        break;
-    case 4:    //TX mode
-        writeRegisterField(REG_OPMODE, 2, 3, 0b011); 
-        break;
-    case 5:    //FSRX mode
-        writeRegisterField(REG_OPMODE, 2, 3, 0b100);
-        break;
-    case 6:    //RXCONTINUOUS mode
-        writeRegisterField(REG_OPMODE, 2, 3, 0b101);  
-        break;
-    case 7:    //RXSINGLE mode
-        writeRegisterField(REG_OPMODE, 2, 3, 0b110);
-        break;
-    case 8:    //CAD mode
-        writeRegisterField(REG_OPMODE, 2, 3, 0b111);
-        break;
-    default:
-        break;
-    }
+	static uint8_t currentMode = 0xFF;
+	
+	if (newMode == currentMode)
+		return;  
+  
+	switch (newMode) 
+	{
+		case RF95_MODE_TX:								// Modo Tx
+		writeRegister(REG_LNA, LNA_OFF_GAIN);  			
+		writeRegister(REG_PA_CONFIG, PA_MAX_UK);
+		writeRegister(REG_OPMODE, newMode);
+		currentMode = newMode; 
+		break;
+
+		case RF95_MODE_RX_CONTINUOUS:
+		writeRegister(REG_PA_CONFIG, PA_OFF_BOOST);  	// Modo Rx
+		writeRegister(REG_LNA, LNA_MAX_GAIN);  			
+		writeRegister(REG_OPMODE, newMode);
+		currentMode = newMode; 
+		break;
+
+		case RF95_MODE_SLEEP:							// Modo SLEEP
+		writeRegister(REG_OPMODE, newMode);
+		currentMode = newMode; 
+		break;
+
+		case RF95_MODE_STANDBY:							// Modo STANDBY
+		writeRegister(REG_OPMODE, newMode);
+		currentMode = newMode; 
+		break;
+
+		default: return;
+	} 
+  
+	if (newMode != RF95_MODE_SLEEP)
+	{
+		sleep_ms(1);
+	}
+   
+	return;
 }
 
 
@@ -144,37 +151,37 @@ void setBW(uint32_t bw)
     switch (bw)
     {
     case 7800:
-        writeRegisterField(REG_MODEM_CONFIG, 7, 4, 0b0000);
+        writeRegisterField(REG_MODEM_CONFIG, 4, 4, 0b0000);
         break;
     case 10400:
-        writeRegisterField(REG_MODEM_CONFIG, 7, 4, 0b0001);
+        writeRegisterField(REG_MODEM_CONFIG, 4, 4, 0b0001);
         break;
     case 15600:
-        writeRegisterField(REG_MODEM_CONFIG, 7, 4, 0b0010);
+        writeRegisterField(REG_MODEM_CONFIG, 4, 4, 0b0010);
         break;
     case 20800:
-        writeRegisterField(REG_MODEM_CONFIG, 7, 4, 0b0011);
+        writeRegisterField(REG_MODEM_CONFIG, 4, 4, 0b0011);
         break;
     case 31250:
-        writeRegisterField(REG_MODEM_CONFIG, 7, 4, 0b0100);
+        writeRegisterField(REG_MODEM_CONFIG, 4, 4, 0b0100);
         break;
     case 41700:
-        writeRegisterField(REG_MODEM_CONFIG, 7, 4, 0b0101);
+        writeRegisterField(REG_MODEM_CONFIG, 4, 4, 0b0101);
         break;
     case 62500:
-        writeRegisterField(REG_MODEM_CONFIG, 7, 4, 0b0110);
+        writeRegisterField(REG_MODEM_CONFIG, 4, 4, 0b0110);
         break;
     case 125000:
-        writeRegisterField(REG_MODEM_CONFIG, 7, 4, 0b0111);
+        writeRegisterField(REG_MODEM_CONFIG, 4, 4, 0b0111);
         break;
     case 250000:
-        writeRegisterField(REG_MODEM_CONFIG, 7, 4, 0b1000);
+        writeRegisterField(REG_MODEM_CONFIG, 4, 4, 0b1000);
         break;
     case 500000:
-        writeRegisterField(REG_MODEM_CONFIG, 7, 4, 0b1001);
+        writeRegisterField(REG_MODEM_CONFIG, 4, 4, 0b1001);
         break;
     default:
-        writeRegisterField(REG_MODEM_CONFIG, 7, 4, 0b0111);
+        writeRegisterField(REG_MODEM_CONFIG, 4, 4, 0b0111);
         break;
     }
 }
@@ -184,25 +191,25 @@ void setSF(uint32_t sf)
     switch (sf)
     {
     case 7:
-        writeRegisterField(REG_MODEM_CONFIG2, 7, 4, 0x07);
+        writeRegisterField(REG_MODEM_CONFIG2, 4, 4, 7);
         break;
     case 8:
-        writeRegisterField(REG_MODEM_CONFIG2, 7, 4, 0x08);
+        writeRegisterField(REG_MODEM_CONFIG2, 4, 4, 8);
         break;
     case 9:
-        writeRegisterField(REG_MODEM_CONFIG2, 7, 4, 0x09);
+        writeRegisterField(REG_MODEM_CONFIG2, 4, 4, 9);
         break;
     case 10:
-        writeRegisterField(REG_MODEM_CONFIG2, 7, 4, 0x0A);
+        writeRegisterField(REG_MODEM_CONFIG2, 4, 4, 10);
         break;
     case 11:
-        writeRegisterField(REG_MODEM_CONFIG2, 7, 4, 0x0B);
+        writeRegisterField(REG_MODEM_CONFIG2, 4, 4, 11);
         break;
     case 12:
-        writeRegisterField(REG_MODEM_CONFIG2, 7, 4, 0x0C);
+        writeRegisterField(REG_MODEM_CONFIG2, 4, 4, 12);
         break;
     default:
-        writeRegisterField(REG_MODEM_CONFIG2, 7, 4, 0x07);
+        writeRegisterField(REG_MODEM_CONFIG2, 4, 4, 13);
         break;
     }
 }

@@ -41,16 +41,16 @@ typedef struct {
     float pressure_bmp280; // 4 bytes
 } sensor_payload_t;
 
-// Configurações do RX (devem ser iguais ao TX)
-uint16_t payload_len = 17; // Tamanho do payload (sizeof(sensor_payload_t))
-uint16_t preamble_len = 8;
-uint16_t sf = 7;
-bool crc_mode = true;
-bool ih = false;
-uint32_t bw = 125000;
-uint16_t cr = 1;
-bool ldro = false;
-double freq = 915;
+// Configurações RX (devem ser iguais ao TX)
+uint16_t rx_payload_len = sizeof(sensor_payload_t); // Tamanho do payload em bytes
+uint16_t rx_preamble_len = 8; // Tamanho do preâmbulo
+uint16_t rx_sf = 7; // fator de espalhamento (Spreading Factor)
+bool rx_crc_mode = true; // flag que indica se o CRC deve ou não ser ativado
+bool rx_ih = false; // Cabeçalho implícito (Implicit Header) (false = explicit header mode)
+uint32_t rx_bw = 125000; // largura de banda (Bandwidth) em Hz
+uint16_t rx_cr = 1; // Taxa de codificação (Coding Rate)
+bool rx_ldro = false; // ldro = true => LowDataRateOptimize ativado
+double rx_freq = 915; // frequencia em MHz
 
 // Dados recebidos
 sensor_payload_t received_data;
@@ -83,7 +83,7 @@ void gpio_irq_handler(uint gpio, uint32_t events){
 
 void setFrequency(double Frequency);
 void setLoRaRX();
-bool receiveData();
+bool receiveLoraData();
 void updateDisplay();
 
 int main() {
@@ -140,32 +140,15 @@ int main() {
 
     while (true) {
         // Verificar se recebeu dados
-        if(receiveData()) {
+        if(receiveLoraData()) {
+            printf("Pacote processado com sucesso!\n\n");
             data_received = true;
-            last_packet_time = to_us_since_boot(get_absolute_time());
-            total_packets++;
-            
-            // Verificar checksum
-            uint8_t *data = (uint8_t*)&received_data;
-            uint8_t checksum = 0;
-            for(int i = 0; i < sizeof(sensor_payload_t) - 1; i++) {
-                checksum ^= data[i];
-            }
-            
-            
-            
-                valid_packets++;
-                printf("=== DADOS RECEBIDOS ===\n");
-                printf("Temp AHT20: %.2f°C\n", received_data.temp_aht20);
-                printf("Umidade AHT20: %.2f%%\n", received_data.humidity_aht20);
-                printf("Temp BMP280: %.2f°C\n", received_data.temp_bmp280);
-                printf("Pressao BMP280: %.3f kPa\n", received_data.pressure_bmp280);
-                printf("Checksum: OK\n");
-                printf("Pacotes: %lu/%lu\n", valid_packets, total_packets);
-                printf("=======================\n");
-            
-            
+        } else {
+            printf("Falha na recepção do pacote.\n\n");
+            data_received = false;
         }
+        
+        sleep_ms(100); // Pequeno delay antes da próxima tentativa
         
         // Atualizar display
         updateDisplay();
@@ -189,206 +172,270 @@ void setFrequency(double Frequency) {
     printf("Frequencia configurada!\n");
 }
 
-void setLoRaRX() {
-    printf("Configurando LoRa para recepcao...\n");
+void setLoRaRX()
+{
+    printf("\n=== INICIANDO CONFIGURAÇÃO LORA RX ===\n");
     
-    setMode(1); // Sleep mode
-    
-    // Configurar como LoRa
-    writeRegisterBit(REG_OPMODE, 7, 1); // Modo LoRa
-    writeRegisterBit(REG_OPMODE, 6, 0); // Desativa FSK
-    writeRegisterBit(REG_OPMODE, 5, 1); // Alta frequência
-    
-    // Configurar frequência
-    setFrequency(freq);
-    
-    // Configurar largura de banda
-    setBW(bw);
-    
-    // Configurar coding rate
-    switch(cr) {
+    // Configuração inicial - modo sleep
+    printf("\nRegOpMode antes do sleep: 0x%02X", readRegister(REG_OPMODE));
+    setMode(RF95_MODE_SLEEP); // Coloca o registrador RegOpMode no modo sleep
+    printf("\nRegOpMode após sleep: 0x%02X", readRegister(REG_OPMODE));
+
+    // Configuração do modo LoRa
+    printf("\nRegOpMode antes config LoRa: 0x%02X", readRegister(REG_OPMODE));
+    writeRegisterBit(REG_OPMODE, 7, 1); // Escreve o valor 1 no bit 7 de REG_OPMODE (coloca no modo LoRa)
+    writeRegisterBit(REG_OPMODE, 6, 0); // Desativa o acesso ao registrador compartilhado com o modo FSK
+    writeRegisterBit(REG_OPMODE, 3, 1); // Ativa o modo de alta frequência
+    printf("\nRegOpMode após config LoRa: 0x%02X", readRegister(REG_OPMODE));
+
+    // Configuração de frequência
+    printf("\n\n--- CONFIGURAÇÃO DE FREQUÊNCIA ---");
+    printf("\nRegFrMsb antes: 0x%02X", readRegister(REG_FRF_MSB));
+    printf("\nRegFrMid antes: 0x%02X", readRegister(REG_FRF_MID));
+    printf("\nRegFrLsb antes: 0x%02X", readRegister(REG_FRF_LSB));
+    setFrequency(rx_freq); // Define a frequencia (mesma do TX)
+    printf("\nRegFrMsb após: 0x%02X", readRegister(REG_FRF_MSB));
+    printf("\nRegFrMid após: 0x%02X", readRegister(REG_FRF_MID));
+    printf("\nRegFrLsb após: 0x%02X", readRegister(REG_FRF_LSB));
+
+    // Configuração da largura de banda
+    printf("\n\n--- CONFIGURAÇÃO DE BANDWIDTH ---");
+    printf("\nRegModemConfig antes BW: 0x%02X", readRegister(REG_MODEM_CONFIG));
+    setBW(rx_bw); // Define a largura de banda (mesma do TX)
+    printf("\nRegModemConfig após BW: 0x%02X", readRegister(REG_MODEM_CONFIG));
+
+    // Configuração do spreading factor
+    printf("\n\n--- CONFIGURAÇÃO DE SPREADING FACTOR ---");
+    printf("\nRegModemConfig2 antes SF: 0x%02X", readRegister(REG_MODEM_CONFIG2));
+    setSF(rx_sf);  // Define o spreading factor (mesmo do TX)
+    printf("\nRegModemConfig2 após SF: 0x%02X", readRegister(REG_MODEM_CONFIG2));
+
+    // Configuração do coding rate
+    printf("\n\n--- CONFIGURAÇÃO DE CODING RATE ---");
+    printf("\nRegModemConfig antes CR: 0x%02X", readRegister(REG_MODEM_CONFIG));
+    switch(rx_cr) 
+    {
     case 1:
-        writeRegisterField(REG_MODEM_CONFIG, 3, 3, 0b001);
+        writeRegisterField(REG_MODEM_CONFIG, 1, 3, 0b001);
         break;
     case 2:
-        writeRegisterField(REG_MODEM_CONFIG, 3, 3, 0b010);
+        writeRegisterField(REG_MODEM_CONFIG, 1, 3, 0b010);
         break;
     case 3:
-        writeRegisterField(REG_MODEM_CONFIG, 3, 3, 0b011);
+        writeRegisterField(REG_MODEM_CONFIG, 1, 3, 0b011);
         break;
     case 4:
-        writeRegisterField(REG_MODEM_CONFIG, 3, 3, 0b100);
+        writeRegisterField(REG_MODEM_CONFIG, 1, 3, 0b100);
         break;
     default:
-        writeRegisterField(REG_MODEM_CONFIG, 3, 3, 0b001);
+        writeRegisterField(REG_MODEM_CONFIG, 1, 3, 0b001);
         break;
     }
-    
-    // CRÍTICO: Configurar header mode (deve ser igual ao TX)
-    if(ih) {
-        writeRegisterBit(REG_MODEM_CONFIG, 0, 1); // Implicit header
-        // No modo implícito, DEVE configurar o payload length
-        writeRegister(REG_PAYLOAD_LENGTH, sizeof(sensor_payload_t));
-        printf("Modo Implicit Header - Payload Length: %d\n", sizeof(sensor_payload_t));
+    printf("\nRegModemConfig após CR: 0x%02X", readRegister(REG_MODEM_CONFIG));
+
+    // Configuração do implicit header mode
+    printf("\n\n--- CONFIGURAÇÃO DE HEADER MODE ---");
+    printf("\nRegModemConfig antes IH: 0x%02X", readRegister(REG_MODEM_CONFIG));
+    if(rx_ih){  // Verifica a flag do implicit header mode
+        writeRegisterBit(REG_MODEM_CONFIG, 0, 1);   // Ativa o implicit header mode
+        printf(" (Implicit Header ATIVADO)");
+    }else
+    {
+        writeRegisterBit(REG_MODEM_CONFIG, 0, 0);   // Desativa o implicit header mode
+        printf(" (Explicit Header ATIVADO)");
+    }
+    printf("\nRegModemConfig após IH: 0x%02X", readRegister(REG_MODEM_CONFIG));
+
+    // Configuração do CRC
+    printf("\n\n--- CONFIGURAÇÃO DE CRC ---");
+    printf("\nRegModemConfig2 antes CRC: 0x%02X", readRegister(REG_MODEM_CONFIG2));
+    if(rx_crc_mode)    // Verifica a flag de ativação do CRC 
+    {
+        writeRegisterBit(REG_MODEM_CONFIG2, 2, 1); // Ativa o CRC
+        printf(" (CRC ATIVADO)");
+    }else
+    {
+        writeRegisterBit(REG_MODEM_CONFIG2, 2, 0); // Desativa o CRC
+        printf(" (CRC DESATIVADO)");
+    }
+    printf("\nRegModemConfig2 após CRC: 0x%02X", readRegister(REG_MODEM_CONFIG2));
+
+    // Configuração do detection optimize
+    printf("\n\n--- CONFIGURAÇÃO DE DETECTION OPTIMIZE ---");
+    printf("\nRegDetectOpt antes: 0x%02X", readRegister(REG_DETECT_OPT));
+    writeRegisterField(REG_DETECT_OPT, 0, 3, 0x03);
+    printf("\nRegDetectOpt após: 0x%02X", readRegister(REG_DETECT_OPT));
+
+    // Configuração do detection threshold
+    printf("\n\n--- CONFIGURAÇÃO DE DETECTION THRESHOLD ---");
+    printf("\nRegDetectionThreshold antes: 0x%02X", readRegister(REG_DETECTION_THRESHOLD));
+    writeRegisterField(REG_DETECTION_THRESHOLD, 0, 8, 0x0A);
+    printf("\nRegDetectionThreshold após: 0x%02X", readRegister(REG_DETECTION_THRESHOLD));
+
+    // Configuração do LDRO (Low Data Rate Optimize)
+    printf("\n\n--- CONFIGURAÇÃO DE LDRO ---");
+    printf("\nRegModemConfig3 antes LDRO: 0x%02X", readRegister(REG_MODEM_CONFIG3));
+    if(rx_ldro)   // Checa se o LowDataRateOptimize deve ser ligado
+    {
+        writeRegisterBit(REG_MODEM_CONFIG3, 3, 1); // ativa o LDRO
+        printf(" (LDRO ATIVADO)");
+    }else{
+        writeRegisterBit(REG_MODEM_CONFIG3, 3, 0); // desativa o LDRO
+        printf(" (LDRO DESATIVADO)");
+    }
+    printf("\nRegModemConfig3 após LDRO: 0x%02X", readRegister(REG_MODEM_CONFIG3));
+
+    // Configuração do payload length (para modo explicit header)
+    printf("\n\n--- CONFIGURAÇÃO DE PAYLOAD LENGTH ---");
+    printf("\nRegPayloadLength antes: 0x%02X", readRegister(REG_PAYLOAD_LENGTH));
+    if(rx_payload_len < 256 && rx_payload_len > 0) // Verifica se o tamanho do payload está entre 1 e 255
+    {
+        writeRegister(REG_PAYLOAD_LENGTH, rx_payload_len); // Escreve o valor decimal diretamente no registrador do payload
+    }else{ // Se o valor estiver fora do limite ele será definido como 255 bytes que é o máximo
+        printf("\nValor de tamanho do payload inválido, o valor será definido como 255 bytes");
+        writeRegister(REG_PAYLOAD_LENGTH, 255);
+    }
+    printf("\nRegPayloadLength após: 0x%02X", readRegister(REG_PAYLOAD_LENGTH));
+
+    // Configuração do preâmbulo
+    printf("\n\n--- CONFIGURAÇÃO DE PREÂMBULO ---");
+    printf("\nRegPreambleMsb antes: 0x%02X", readRegister(REG_PREAMBLE_MSB));
+    printf("\nRegPreambleLsb antes: 0x%02X", readRegister(REG_PREAMBLE_LSB));
+    if (rx_preamble_len > 0) {
+        writeRegister(REG_PREAMBLE_MSB, (rx_preamble_len >> 8) & 0xFF);
+        writeRegister(REG_PREAMBLE_LSB, rx_preamble_len & 0xFF);
     } else {
-        writeRegisterBit(REG_MODEM_CONFIG, 0, 0); // Explicit header
-        printf("Modo Explicit Header\n");
+        printf("\nValor de preâmbulo inválido, será definido como 8 (default)");
+        writeRegister(REG_PREAMBLE_MSB, 0x00);
+        writeRegister(REG_PREAMBLE_LSB, 0x08);
     }
+    printf("\nRegPreambleMsb após: 0x%02X", readRegister(REG_PREAMBLE_MSB));
+    printf("\nRegPreambleLsb após: 0x%02X", readRegister(REG_PREAMBLE_LSB));
+
+    // Configuração do LNA (Low Noise Amplifier) para recepção
+    printf("\n\n--- CONFIGURAÇÃO DE LNA ---");
+    printf("\nRegLna antes: 0x%02X", readRegister(REG_LNA));
+    writeRegister(REG_LNA, 0x23); // LNA boost on, Maximum gain
+    printf("\nRegLna após: 0x%02X", readRegister(REG_LNA));
+
+    // Configuração do mapeamento DIO para RX
+    printf("\n\n--- CONFIGURAÇÃO DE DIO MAPPING RX ---");
+    printf("\nRegDioMapping1 antes: 0x%02X", readRegister(REG_DIO_MAPPING_1));
+    printf("\nRegDioMapping2 antes: 0x%02X", readRegister(REG_DIO_MAPPING_2));
+    writeRegister(REG_DIO_MAPPING_1, 0x00); // DIO0 = RxDone, DIO1 = RxTimeout
+    writeRegister(REG_DIO_MAPPING_2, 0x00);
+    printf("\nRegDioMapping1 após: 0x%02X", readRegister(REG_DIO_MAPPING_1));
+    printf("\nRegDioMapping2 após: 0x%02X", readRegister(REG_DIO_MAPPING_2));
+
+    // Configurar FIFO para recepção
+    printf("\n\n--- CONFIGURAÇÃO DE FIFO RX ---");
+    printf("\nRegFifoRxBaseAddr antes: 0x%02X", readRegister(REG_FIFO_RX_BASE_AD));
+    printf("\nRegFifoAddrPtr antes: 0x%02X", readRegister(REG_FIFO_ADDR_PTR));
+    writeRegister(REG_FIFO_RX_BASE_AD, 0x00); // Base address para RX
+    writeRegister(REG_FIFO_ADDR_PTR, 0x00);   // Pointer para início do FIFO
+    printf("\nRegFifoRxBaseAddr após: 0x%02X", readRegister(REG_FIFO_RX_BASE_AD));
+    printf("\nRegFifoAddrPtr após: 0x%02X", readRegister(REG_FIFO_ADDR_PTR));
+
+    // Limpar IRQ flags
+    printf("\n\n--- LIMPEZA DE IRQ FLAGS ---");
+    printf("\nRegIrqFlags antes: 0x%02X", readRegister(REG_IRQ_FLAGS));
+    writeRegister(REG_IRQ_FLAGS, 0xFF); // Limpa todas as flags de IRQ
+    printf("\nRegIrqFlags após: 0x%02X", readRegister(REG_IRQ_FLAGS));
+
+    // Modo standby final antes de entrar em RX
+    printf("\n\n--- CONFIGURAÇÃO FINAL - MODO STANDBY ---");
+    printf("\nRegOpMode antes standby: 0x%02X", readRegister(REG_OPMODE));
+    setMode(RF95_MODE_STANDBY); // Coloca em modo stand by
+    printf("\nRegOpMode após standby: 0x%02X", readRegister(REG_OPMODE));
+
+    printf("\n\n=== CONFIGURAÇÃO LORA RX CONCLUÍDA ===\n");
+}
+
+
+bool receiveLoraData() {
+    sensor_payload_t received_payload;
     
-    // Configurar spreading factor
-    setSF(sf);
+    printf("\n=== INICIANDO RECEPÇÃO ===\n");
     
-    // Configurar CRC (DEVE ser igual ao TX)
-    if(crc_mode) {
-        writeRegisterBit(REG_MODEM_CONFIG2, 2, 1);
-        printf("CRC habilitado\n");
-    } else {
-        writeRegisterBit(REG_MODEM_CONFIG2, 2, 0);
-        printf("CRC desabilitado\n");
-    }
-    
-    // Configurar detect optimize e threshold
-    writeRegisterField(REG_DETECT_OPT, 2, 3, 0x03);
-    writeRegisterField(REG_DETECTION_THRESHOLD, 7, 8, 0x0A);
-    
-    // Configurar LDRO
-    if(ldro) {
-        writeRegisterBit(REG_MODEM_CONFIG3, 3, 1);
-    } else {
-        writeRegisterBit(REG_MODEM_CONFIG3, 3, 0);
-    }
-    
-    // Configurar preâmbulo
-    if (preamble_len > 0) {
-        writeRegister(REG_PREAMBLE_MSB, (preamble_len >> 8) & 0xFF);
-        writeRegister(REG_PREAMBLE_LSB, preamble_len & 0xFF);
-    }
-    
-    // Configurar LNA
-    writeRegister(REG_LNA, LNA_MAX_GAIN);
-    
-    // Configurar DIO0 para RxDone
-    writeRegister(REG_DIO_MAPPING_1, 0x00); // DIO0 = RxDone
-    
-    // Configurar FIFO
-    writeRegister(REG_FIFO_RX_BASE_AD, 0x00);   // Define o endereço inicial da partição da FIFO em que os dados de recepção serão armazenados (bits 0 até 128)
-    writeRegister(REG_FIFO_ADDR_PTR, 0x00); // Desloca o ponteiro da FIFO para a posição inicial correspondentes aos dados de recepção
-    writeRegister(REG_FIFO_RX_BASE_AD, 0x00);
-    writeRegister(REG_FIFO_ADDR_PTR, 0x00);
-    
-    // Limpar flags de interrupção
+    // Limpar IRQ flags
     writeRegister(REG_IRQ_FLAGS, 0xFF);
     
-    // DEBUG: Imprimir configurações importantes
-    printf("=== CONFIGURAÇÕES RX ===\n");
-    printf("Payload Length: %d\n", readRegister(REG_PAYLOAD_LENGTH));
-    printf("Modem Config 1: 0x%02X\n", readRegister(REG_MODEM_CONFIG));
-    printf("Modem Config 2: 0x%02X\n", readRegister(REG_MODEM_CONFIG2));
-    printf("Modem Config 3: 0x%02X\n", readRegister(REG_MODEM_CONFIG3));
-    printf("========================\n");
+    // Configurar FIFO para recepção
+    writeRegister(REG_FIFO_ADDR_PTR, readRegister(REG_FIFO_RX_BASE_AD));
     
-    // Colocar em modo de recepção contínua
-    setMode(6); // RXCONTINUOUS
+    // Entrar em modo RX contínuo
+    printf("Entrando em modo RX...\n");
+    setMode(RF95_MODE_RX_CONTINUOUS);
     
-    printf("LoRa configurado para recepcao!\n");
-}
-  
-
-bool receiveData() {
-    // Verificar se recebeu dados (RxDone flag)
-    uint8_t irq_flags = readRegister(REG_IRQ_FLAGS);
+    printf("Aguardando pacote LoRa...\n");
     
-    // DEBUG: Mostrar todas as flags
-    printf("IRQ Flags: 0x%02X\n", irq_flags);
+    // Aguardar recepção (timeout de 30 segundos)
+    uint32_t timeout_start = to_us_since_boot(get_absolute_time());
+    uint32_t timeout_us = 30000000; // 30 segundos
     
-    if(irq_flags & 0x40) { // RxDone (bit 6)
-        printf("=== PACOTE DETECTADO ===\n");
+    while(!(readRegister(REG_IRQ_FLAGS) & 0x40)) { // Bit 6 = RxDone
+        uint32_t current_time = to_us_since_boot(get_absolute_time());
+        if(current_time - timeout_start > timeout_us) {
+            printf("Timeout na recepção!\n");
+            setMode(RF95_MODE_STANDBY);
+            return false;
+        }
         
-        // Verificar se há erro de CRC ANTES de processar
-        if(irq_flags & 0x20) { // CRC Error (bit 5)
-            printf("ERRO: CRC inválido!\n");
-            printf("IRQ Flags detalhadas: 0x%02X\n", irq_flags);
-            
-            // Ainda assim, vamos verificar quantos bytes foram recebidos
-            uint8_t nb_bytes = readRegister(REG_RX_NB_BYTES);
-            printf("Bytes recebidos mesmo com CRC erro: %d\n", nb_bytes);
-            
+        // Verificar se houve erro de CRC
+        if(readRegister(REG_IRQ_FLAGS) & 0x20) { // Bit 5 = PayloadCrcError
+            printf("Erro de CRC detectado!\n");
             writeRegister(REG_IRQ_FLAGS, 0xFF); // Limpar flags
-            return false;
-            return false;
+            writeRegister(REG_FIFO_ADDR_PTR, readRegister(REG_FIFO_RX_BASE_AD));
+            continue; // Continuar aguardando próximo pacote
         }
         
-        // Verificar se há erro de header
-        if(irq_flags & 0x10) { // Valid Header (bit 4) - deve estar em 1
-            printf("Header válido detectado\n");
-        } else {
-            printf("AVISO: Header pode estar inválido\n");
-        }
-        
-        //ler número de bytes recebidos
-        uint8_t nb_bytes = readRegister(REG_RX_NB_BYTES);
-        printf("Bytes efetivamente recebidos: %d\n", nb_bytes);
-        printf("Bytes esperados: %d\n", sizeof(sensor_payload_t));
-        
-        // Ler informações adicionais para debug
-        uint8_t current_addr = readRegister(REG_FIFO_RX_CURRENT_ADDR);
-        uint8_t payload_len_reg = readRegister(REG_PAYLOAD_LENGTH);
-        
-        printf("=== DEBUG DETALHADO ===\n");
-        printf("FIFO RX Current Addr: 0x%02X\n", current_addr);
-        printf("Payload Length Register: %d\n", payload_len_reg);
-        printf("Modem Status: 0x%02X\n", readRegister(0x18));
-        
-        // Verificar se o tamanho está correto
-        if(nb_bytes != sizeof(sensor_payload_t)) {
-            printf("ERRO: Tamanho incorreto!\n");
-            printf("Esperado: %d bytes, Recebido: %d bytes\n", 
-                   sizeof(sensor_payload_t), nb_bytes);
-            
-            // Tentar ler os dados mesmo assim para debug
-            printf("Tentando ler os %d bytes recebidos:\n", nb_bytes);
-            writeRegister(REG_FIFO_ADDR_PTR, current_addr);
-            for(int i = 0; i < nb_bytes && i < 20; i++) {
-                uint8_t byte = readRegister(REG_FIFO);
-                printf("Byte %d: 0x%02X (%d)\n", i, byte, byte);
-            }
-            
-            writeRegister(REG_IRQ_FLAGS, 0xFF);
-            return false;
-        }
-        
-        // Ler endereço atual do FIFO
-        writeRegister(REG_FIFO_ADDR_PTR, current_addr);
-        
-        // Ler dados do FIFO
-        uint8_t *payload_bytes = (uint8_t*)&received_data;
-        for(int i = 0; i < sizeof(sensor_payload_t); i++) {
-        printf("Lendo payload byte a byte:\n");
-        for(int i = 0; i < sizeof(sensor_payload_t); i++) {
-            payload_bytes[i] = readRegister(REG_FIFO);
-            printf("Byte %d: 0x%02X\n", i, payload_bytes[i]);
-        }
-        
-        // Limpar flags de interrupção
-        writeRegister(REG_IRQ_FLAGS, 0xFF);
-        
-        // Ler RSSI do último pacote
-        int16_t rssi = readRegister(0x1A) - 164; // Para frequência > 868MHz
-        printf("RSSI: %d dBm\n", rssi);
-        
-        // DEBUG: Mostrar os floats recebidos
-        printf("=== DADOS DECODIFICADOS ===\n");
-        printf("Temp AHT20: %.2f°C\n", received_data.temp_aht20);
-        printf("Umidade AHT20: %.2f%%\n", received_data.humidity_aht20);
-        printf("Temp BMP280: %.2f°C\n", received_data.temp_bmp280);
-        printf("Pressão BMP280: %.3f kPa\n", received_data.pressure_bmp280);
-        printf("========================\n");
-        
-        return true;
+        sleep_ms(10); // Pequeno delay para não sobrecarregar
     }
     
-    return false;
+    printf("Pacote recebido!\n");
+    
+    // Verificar tamanho do payload recebido
+    uint8_t rx_nb_bytes = readRegister(REG_RX_NB_BYTES);
+    printf("Tamanho do payload recebido: %d bytes\n", rx_nb_bytes);
+    
+    // Verificar se o tamanho está correto
+    if(rx_nb_bytes != sizeof(sensor_payload_t)) {
+        printf("ERRO: Tamanho do payload incorreto! Esperado: %d, Recebido: %d\n", 
+               sizeof(sensor_payload_t), rx_nb_bytes);
+        writeRegister(REG_IRQ_FLAGS, 0xFF); // Limpar flags
+        setMode(RF95_MODE_STANDBY);
+        return false;
+    }
+    
+    // Posicionar ponteiro do FIFO no início dos dados recebidos
+    uint8_t fifo_rx_current_addr = readRegister(REG_FIFO_RX_CURRENT_ADDR);
+    writeRegister(REG_FIFO_ADDR_PTR, fifo_rx_current_addr);
+    
+    // Ler dados do FIFO byte a byte
+    uint8_t *payload_bytes = (uint8_t*)&received_payload;
+    for(int i = 0; i < sizeof(sensor_payload_t); i++) {
+        payload_bytes[i] = readRegister(REG_FIFO);
+    }
+    
+    // Limpar flags de IRQ
+    writeRegister(REG_IRQ_FLAGS, 0xFF);
+    
+    // Voltar para modo standby
+    setMode(RF95_MODE_STANDBY);
+    
+    // Exibir dados recebidos
+    printf("\n=== DADOS DOS SENSORES RECEBIDOS ===\n");
+    printf("Temperatura AHT20: %.2f°C\n", received_payload.temp_aht20);
+    printf("Umidade AHT20: %.2f%%\n", received_payload.humidity_aht20);
+    printf("Temperatura BMP280: %.2f°C\n", received_payload.temp_bmp280);
+    printf("Pressão BMP280: %.3f kPa\n", received_payload.pressure_bmp280);
+    printf("=====================================\n");
+
+    received_data = received_payload;
+    
+    return true;
 }
+
 
 void updateDisplay() {
     char str_temp_aht[20];

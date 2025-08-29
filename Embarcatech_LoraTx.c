@@ -68,10 +68,9 @@ typedef struct __attribute__ ((packed)) {
 uint32_t last_sensor_read = 0;
 
 // Configurações do - TX:
-uint16_t payload_len = 17; // Tamanho do payload em byte
+uint16_t payload_len = sizeof(sensor_payload_t); // Tamanho do payload em byte
 uint16_t preamble_len = 8; // Tamanho do preâmbulo
 uint16_t sf = 7; // fator de espalhamento (Spreading Factor)
-uint16_t crc = 0; // tamanho do CRC (Cyclic Redundancy Check) em bytes (normalmente 2 bytes) (não encontrei uso para essa variável, tamanho do CRC?)
 bool crc_mode = true; // flag que indica se o CRC deve ou não ser ativado
 bool ih = false; // Cabeçalho implícito (Implicit Header) (false = explicit header mode)
 uint32_t bw = 125000; // largura de banda (Bandwidth) em Hz
@@ -157,15 +156,11 @@ int main()
     gpio_set_function(MISO_PIN, GPIO_FUNC_SPI);
     gpio_set_function(SPI_SCL_PIN, GPIO_FUNC_SPI);
     gpio_set_function(MOSI_PIN, GPIO_FUNC_SPI);
-    // // Make the SPI pins available to picotool
-    // bi_decl(bi_3pins_with_func(PICO_DEFAULT_SPI_RX_PIN, PICO_DEFAULT_SPI_TX_PIN, PICO_DEFAULT_SPI_SCK_PIN, GPIO_FUNC_SPI));
 
     // Inicializando o Chip Select em driven-high state, ele é ativado em low
     gpio_init(CSN_PIN);
     gpio_set_dir(CSN_PIN, GPIO_OUT);
     gpio_put(CSN_PIN, 1);
-    // Make the CS pin available to picotool
-    // bi_decl(bi_1pin_with_name(PICO_DEFAULT_SPI_CSN_PIN, "SPI CS"));
 
     // Inicializando o pino de reset, que é ativado em nível baixo
     gpio_init(RST_PIN);
@@ -186,7 +181,7 @@ int main()
 
         uint32_t current_sensor_read = to_us_since_boot(get_absolute_time());
 
-        //if(current_sensor_read-last_sensor_read > 2000000){
+        if(current_sensor_read-last_sensor_read > 2000000){
 
             last_sensor_read = current_sensor_read;
             // Leitura do BMP280
@@ -194,24 +189,15 @@ int main()
             int32_t temperature = bmp280_convert_temp(raw_temp_bmp, &params);
             int32_t pressure = bmp280_convert_pressure(raw_pressure, raw_temp_bmp, &params);
 
-            printf("[DEBUG] Leitura de sensores\n");
-            printf("BMP280.pressure = %.3f kPa\n", BMP280_data.pressure);
-            printf("BMP280.temperature = %.2f C\n", BMP280_data.temperature);
-
             // Leitura do AHT20
-            if (aht20_read(I2C_PORT, &AHT20_data)){
-                printf("AHT20_data.temperature = %.2f C\n", AHT20_data.temperature);
-                printf("AHT20_data.humidity = %.2f %%\n", AHT20_data.humidity);
-            }
-            else{
+            if (!aht20_read(I2C_PORT, &AHT20_data)){
                 printf("Erro na leitura do AHT10!\n");
             }
             printf("\n\n");
 
             BMP280_data.pressure = pressure/1000.0f;
             BMP280_data.temperature = temperature/100.0f;
-
-        //}
+        }
 
         // Atualizando as strings
         sprintf(str_tmp_aht, "%.1f C", AHT20_data.temperature);
@@ -223,81 +209,49 @@ int main()
         // Frame que será reutilizado
         ssd1306_fill(&ssd, false);
         ssd1306_rect(&ssd, 0, 0, 128, 64, cor, !cor);
-        // Mensagem superior (Nome do projeto e vagas ocupadas/totais)
         ssd1306_rect(&ssd, 0, 0, 128, 12, cor, cor); // Fundo preenchido
         ssd1306_draw_string(&ssd, "DogAtmos", 4, 3, true);
 
         switch(display_page){
             // AHT20 - Temperatura
             case 1:
-                ssd1306_draw_string(&ssd, "1/5", 95, 3, true);
+                ssd1306_draw_string(&ssd, "1/4", 95, 3, true);
                 ssd1306_draw_string(&ssd, "ATUAL: ", 4, 18, false);
                 ssd1306_draw_string(&ssd, str_tmp_aht, 12+7*8, 18, false);
                 ssd1306_draw_string(&ssd, "STATUS: ", 4, 28, false);
-                // Simbolo de alerta
-                // make_alert_display(sensor_alerts.aht20_temperature, 4 + 8*8, 28);
-                // // Offset atual
-                // ssd1306_draw_string(&ssd, "OFFSET: ", 4, 38, false);
-                // ssd1306_draw_string(&ssd, str_offset_tmp_aht, 4 + 8*8, 38, false);
-                // Indicação inferior
                 ssd1306_rect(&ssd, 51, 0, 128, 12, cor, cor); // Fundo preenchido
                 ssd1306_draw_string(&ssd, "AHT-TEMPERATURA", 4, 53, true);
                 break;
 
             // AHT20 - Umidade
             case 2:
-                ssd1306_draw_string(&ssd, "2/5", 95, 3, true);
+                ssd1306_draw_string(&ssd, "2/4", 95, 3, true);
                 ssd1306_draw_string(&ssd, "ATUAL: ", 4, 18, false);
                 ssd1306_draw_string(&ssd, str_humi_aht, 12+7*8, 18, false);
                 ssd1306_draw_string(&ssd, "STATUS: ", 4, 28, false);
-                // Simbolo de alerta
-                // make_alert_display(sensor_alerts.aht20_humidity, 4 + 8*8, 28);
-                // // Offset atual
-                // ssd1306_draw_string(&ssd, "OFFSET: ", 4, 38, false);
-                // ssd1306_draw_string(&ssd, str_offset_humi_aht, 4 + 8*8, 38, false);
-                // Indicação inferior
                 ssd1306_rect(&ssd, 51, 0, 128, 12, cor, cor); // Fundo preenchido
                 ssd1306_draw_string(&ssd, "AHT - UMIDADE", 4, 53, true);
                 break;
 
             // BMP - Pressão
             case 3:
-                ssd1306_draw_string(&ssd, "3/5", 95, 3, true);
+                ssd1306_draw_string(&ssd, "3/4", 95, 3, true);
                 ssd1306_draw_string(&ssd, "ATUAL: ", 4, 18, false);
                 ssd1306_draw_string(&ssd, str_press_bmp, 12+7*8, 18, false);
                 ssd1306_draw_string(&ssd, "STATUS: ", 4, 28, false);
-                // Simbolo de alerta
-                // make_alert_display(sensor_alerts.bmp280_pressure, 4 + 8*8, 28);
-                // // Offset atual
-                // ssd1306_draw_string(&ssd, "OFFSET: ", 4, 38, false);
-                // ssd1306_draw_string(&ssd, str_offset_press_bmp, 4 + 8*8, 38, false);
-                // Indicação inferior
                 ssd1306_rect(&ssd, 51, 0, 128, 12, cor, cor); // Fundo preenchido
                 ssd1306_draw_string(&ssd, "BMP - PRESSAO", 4, 53, true);
                 break;
 
             // BMP - Temperatura
             case 4:
-                ssd1306_draw_string(&ssd, "4/5", 95, 3, true);
+                ssd1306_draw_string(&ssd, "4/4", 95, 3, true);
                 ssd1306_draw_string(&ssd, "ATUAL: ", 4, 18, false);
                 ssd1306_draw_string(&ssd, str_temp_bmp, 12+7*8, 18, false);
                 ssd1306_draw_string(&ssd, "STATUS: ", 4, 28, false);
-                // // Simbolo de alerta
-                // make_alert_display(sensor_alerts.bmp280_temperature, 4 + 8*8, 28);
-                // // Offset atual
-                // ssd1306_draw_string(&ssd, "OFFSET: ", 4, 38, false);
-                // ssd1306_draw_string(&ssd, str_offset_temp_bmp, 4 + 8*8, 38, false);
-                // Indicação inferior
                 ssd1306_rect(&ssd, 51, 0, 128, 12, cor, cor); // Fundo preenchido
                 ssd1306_draw_string(&ssd, "BMP-TEMPERATURA", 4, 53, true);
                 break;
-
-            // Tela de IP
-            // case 5:
-            //     ssd1306_draw_string(&ssd, "5/5", 95, 3, true);
-            //     ssd1306_draw_string(&ssd, "IP do servidor", 4, 24, false);
-            //     ssd1306_draw_string(&ssd, ip_str, 4, 34, false);
-            //     break;
         }
 
         ssd1306_send_data(&ssd);
@@ -334,117 +288,169 @@ void setFrequency(double Frequency)
     readRegister(REG_FRF_LSB);
 }
 
+
 void setLora()
 {
-    setMode(1); // Coloca o registrador RegOpMode no modo sleep, os modos estão descritos em comentários na função
+    printf("\n=== INICIANDO CONFIGURAÇÃO LORA ===\n");
+    
+    // Configuração inicial - modo sleep
+    printf("\nRegOpMode antes do sleep: 0x%02X", readRegister(REG_OPMODE));
+    setMode(RF95_MODE_SLEEP); // Coloca o registrador RegOpMode no modo sleep
+    printf("\nRegOpMode após sleep: 0x%02X", readRegister(REG_OPMODE));
 
-    printf("\n RegOpMode:");
-    readRegister(REG_OPMODE);
-
-    writeRegisterBit(REG_OPMODE, 7, 1); // Escreve o valor 1 no bit 7 de REG_OPMODE sem alterar os outros valores (coloca no modo LoRa)
+    // Configuração do modo LoRa
+    printf("\nRegOpMode antes config LoRa: 0x%02X", readRegister(REG_OPMODE));
+    writeRegisterBit(REG_OPMODE, 7, 1); // Escreve o valor 1 no bit 7 de REG_OPMODE (coloca no modo LoRa)
     writeRegisterBit(REG_OPMODE, 6, 0); // Desativa o acesso ao registrador compartilhado com o modo FSK
-    writeRegisterBit(REG_OPMODE, 5, 1); // Ativa o modo de alta frequência (permitir configuração pelo usuario posteriormente)
+    writeRegisterBit(REG_OPMODE, 3, 1); // Ativa o modo de alta frequência
+    printf("\nRegOpMode após config LoRa: 0x%02X", readRegister(REG_OPMODE));
 
-    setFrequency(freq); // Define a frequencia com a função já feita pelo prof
+    // Configuração de frequência
+    printf("\n\n--- CONFIGURAÇÃO DE FREQUÊNCIA ---");
+    printf("\nRegFrMsb antes: 0x%02X", readRegister(REG_FRF_MSB));
+    printf("\nRegFrMid antes: 0x%02X", readRegister(REG_FRF_MID));
+    printf("\nRegFrLsb antes: 0x%02X", readRegister(REG_FRF_LSB));
+    setFrequency(freq); // Define a frequencia
+    printf("\nRegFrMsb após: 0x%02X", readRegister(REG_FRF_MSB));
+    printf("\nRegFrMid após: 0x%02X", readRegister(REG_FRF_MID));
+    printf("\nRegFrLsb após: 0x%02X", readRegister(REG_FRF_LSB));
 
-    setBW(bw); // Define a largua de banda
+    // Configuração da largura de banda
+    printf("\n\n--- CONFIGURAÇÃO DE BANDWIDTH ---");
+    printf("\nRegModemConfig antes BW: 0x%02X", readRegister(REG_MODEM_CONFIG));
+    setBW(bw); // Define a largura de banda
+    printf("\nRegModemConfig após BW: 0x%02X", readRegister(REG_MODEM_CONFIG));
 
-    // Define o coding rate de acordo com a variável cr (deve ser entre 1 e 4 e o default é 1)
+    // Configuração do spreading factor
+    printf("\n\n--- CONFIGURAÇÃO DE SPREADING FACTOR ---");
+    printf("\nRegModemConfig2 antes SF: 0x%02X", readRegister(REG_MODEM_CONFIG2));
+    setSF(sf);  // Define o spreading factor
+    printf("\nRegModemConfig2 após SF: 0x%02X", readRegister(REG_MODEM_CONFIG2));
+
+    // Configuração do coding rate
+    printf("\n\n--- CONFIGURAÇÃO DE CODING RATE ---");
+    printf("\nRegModemConfig antes CR: 0x%02X", readRegister(REG_MODEM_CONFIG));
     switch(cr) 
     {
     case 1:
-        writeRegisterField(REG_MODEM_CONFIG, 3, 3, 0b001);
+        writeRegisterField(REG_MODEM_CONFIG, 1, 3, 0b001);
         break;
     case 2:
-        writeRegisterField(REG_MODEM_CONFIG, 3, 3, 0b010);
+        writeRegisterField(REG_MODEM_CONFIG, 1, 3, 0b010);
         break;
     case 3:
-        writeRegisterField(REG_MODEM_CONFIG, 3, 3, 0b011);
+        writeRegisterField(REG_MODEM_CONFIG, 1, 3, 0b011);
         break;
     case 4:
-        writeRegisterField(REG_MODEM_CONFIG, 3, 3, 0b100);
+        writeRegisterField(REG_MODEM_CONFIG, 1, 3, 0b100);
         break;
     default:
-        writeRegisterField(REG_MODEM_CONFIG, 3, 3, 0b001);
+        writeRegisterField(REG_MODEM_CONFIG, 1, 3, 0b001);
         break;
     }
+    printf("\nRegModemConfig após CR: 0x%02X", readRegister(REG_MODEM_CONFIG));
 
+    // Configuração do implicit header mode
+    printf("\n\n--- CONFIGURAÇÃO DE HEADER MODE ---");
+    printf("\nRegModemConfig antes IH: 0x%02X", readRegister(REG_MODEM_CONFIG));
     if(ih){  // Verifica a flag do implicit header mode
-
         writeRegisterBit(REG_MODEM_CONFIG, 0, 1);   // Ativa o implicit header mode
-
+        printf(" (Implicit Header ATIVADO)");
     }else
     {
         writeRegisterBit(REG_MODEM_CONFIG, 0, 0);   // Desativa o implicit header mode
+        printf(" (Explicit Header ATIVADO)");
     }
+    printf("\nRegModemConfig após IH: 0x%02X", readRegister(REG_MODEM_CONFIG));
 
-    setSF(sf);  // Define o spreading factor (O caso do sf 6 não foi tratado, precisa de uma config especifica, portanto, ELE SÓ PODE SER DE 7 ATÉ 12)
-
+    // Configuração do CRC
+    printf("\n\n--- CONFIGURAÇÃO DE CRC ---");
+    printf("\nRegModemConfig2 antes CRC: 0x%02X", readRegister(REG_MODEM_CONFIG2));
     if(crc_mode)    // Verifica a flag de ativação do CRC 
     {
-        writeRegisterBit(REG_MODEM_CONFIG2, 2, 1); // Ativa o CRC (deve ser ativado no receptor também)
+        writeRegisterBit(REG_MODEM_CONFIG2, 2, 1); // Ativa o CRC
+        printf(" (CRC ATIVADO)");
     }else
     {
         writeRegisterBit(REG_MODEM_CONFIG2, 2, 0); // Desativa o CRC
+        printf(" (CRC DESATIVADO)");
     }
-    // O spreading factor utiliza bits do registrador REG_MODEM_CONFIG2
-    // Esse registrador também é responsável por outros parametros (TxContinuousMode por exemplo)
-    // Tirando o do CRC, eles foram deixados como padrão nesse primeiro momento, mas podem precisar ser alterados depois
+    printf("\nRegModemConfig2 após CRC: 0x%02X", readRegister(REG_MODEM_CONFIG2));
 
-    // Escreve 0x03 nos três ultimos bits do registrador RegDetectOptmize (Lora detection optmize)
-    // Esse valor (0x03) considera apenas os casos de espreading factor 7 até 12
-    // O CASO DO SPREADING FACTOR 6 AINDA PRECISA SER TRATADO
-    writeRegisterField(REG_DETECT_OPT, 2, 3, 0x03);
+    // Configuração do detection optimize
+    printf("\n\n--- CONFIGURAÇÃO DE DETECTION OPTIMIZE ---");
+    printf("\nRegDetectOpt antes: 0x%02X", readRegister(REG_DETECT_OPT));
+    writeRegisterField(REG_DETECT_OPT, 0, 3, 0x03);
+    printf("\nRegDetectOpt após: 0x%02X", readRegister(REG_DETECT_OPT));
 
-    // Escreve 0x0A no registrador RegDetectionThreshold (Lora detection threshold)
-    // Esse valor (0x0a) considera apenas os casos de espreading factor 7 até 12
-    // O CASO DO SPREADING FACTOR 6 AINDA PRECISA SER TRATADO
-    writeRegisterField(REG_DETECTION_THRESHOLD, 7, 8, 0x0A);
+    // Configuração do detection threshold
+    printf("\n\n--- CONFIGURAÇÃO DE DETECTION THRESHOLD ---");
+    printf("\nRegDetectionThreshold antes: 0x%02X", readRegister(REG_DETECTION_THRESHOLD));
+    writeRegisterField(REG_DETECTION_THRESHOLD, 0, 8, 0x0A);
+    printf("\nRegDetectionThreshold após: 0x%02X", readRegister(REG_DETECTION_THRESHOLD));
 
-
+    // Configuração do LDRO (Low Data Rate Optimize)
+    printf("\n\n--- CONFIGURAÇÃO DE LDRO ---");
+    printf("\nRegModemConfig3 antes LDRO: 0x%02X", readRegister(REG_MODEM_CONFIG3));
     if(ldro)   // Checa se o LowDataRateOptimize deve ser ligado
     {
         writeRegisterBit(REG_MODEM_CONFIG3, 3, 1); // ativa o LDRO
+        printf(" (LDRO ATIVADO)");
     }else{
-
         writeRegisterBit(REG_MODEM_CONFIG3, 3, 0); // desativa o LDRO
+        printf(" (LDRO DESATIVADO)");
     }
+    printf("\nRegModemConfig3 após LDRO: 0x%02X", readRegister(REG_MODEM_CONFIG3));
 
+    // Configuração do payload length
+    printf("\n\n--- CONFIGURAÇÃO DE PAYLOAD LENGTH ---");
+    printf("\nRegPayloadLength antes: 0x%02X", readRegister(REG_PAYLOAD_LENGTH));
     if(payload_len < 256 && payload_len > 0) // Verifica se o tamanho do payload está entre 1 e 255
     {
         writeRegister(REG_PAYLOAD_LENGTH, payload_len); // Escreve o valor decimal diretamente no registrador do payload
-
-    }else{ // Se o valor não estiver fora do limite ele será definido como 255 bytes que é o máximo
-        printf("\n Valor de tamanho do payload inválido, o valor será definido como 255 bytes");
+    }else{ // Se o valor estiver fora do limite ele será definido como 255 bytes que é o máximo
+        printf("\nValor de tamanho do payload inválido, o valor será definido como 255 bytes");
         writeRegister(REG_PAYLOAD_LENGTH, 255);
     }
+    printf("\nRegPayloadLength após: 0x%02X", readRegister(REG_PAYLOAD_LENGTH));
 
-    // Configura o preâmbulo de acordo com a variável global
+    // Configuração do preâmbulo
+    printf("\n\n--- CONFIGURAÇÃO DE PREÂMBULO ---");
+    printf("\nRegPreambleMsb antes: 0x%02X", readRegister(REG_PREAMBLE_MSB));
+    printf("\nRegPreambleLsb antes: 0x%02X", readRegister(REG_PREAMBLE_LSB));
     if (preamble_len > 0) {
-
         writeRegister(REG_PREAMBLE_MSB, (preamble_len >> 8) & 0xFF);
         writeRegister(REG_PREAMBLE_LSB, preamble_len & 0xFF);
-
     } else {
-
         printf("\nValor de preâmbulo inválido, será definido como 8 (default)");
-
         writeRegister(REG_PREAMBLE_MSB, 0x00);
         writeRegister(REG_PREAMBLE_LSB, 0x08);
     }
+    printf("\nRegPreambleMsb após: 0x%02X", readRegister(REG_PREAMBLE_MSB));
+    printf("\nRegPreambleLsb após: 0x%02X", readRegister(REG_PREAMBLE_LSB));
 
-    // Configurar potência de transmissão
+    // Configuração da potência de transmissão
+    printf("\n\n--- CONFIGURAÇÃO DE POTÊNCIA PA ---");
+    printf("\nRegPaConfig antes: 0x%02X", readRegister(REG_PA_CONFIG));
     writeRegister(REG_PA_CONFIG, PA_MED_BOOST); // ou PA_MAX_BOOST se precisar de mais alcance
+    printf("\nRegPaConfig após: 0x%02X", readRegister(REG_PA_CONFIG));
 
-    // Configurar DIO0 para TxDone (modo TX)
+    // Configuração do mapeamento DIO
+    printf("\n\n--- CONFIGURAÇÃO DE DIO MAPPING ---");
+    printf("\nRegDioMapping1 antes: 0x%02X", readRegister(REG_DIO_MAPPING_1));
+    printf("\nRegDioMapping2 antes: 0x%02X", readRegister(REG_DIO_MAPPING_2));
     writeRegister(REG_DIO_MAPPING_1, 0x40); // DIO0 = TxDone
-	writeRegister(REG_DIO_MAPPING_2,0x00);
-    
+    writeRegister(REG_DIO_MAPPING_2, 0x00);
+    printf("\nRegDioMapping1 após: 0x%02X", readRegister(REG_DIO_MAPPING_1));
+    printf("\nRegDioMapping2 após: 0x%02X", readRegister(REG_DIO_MAPPING_2));
 
-    setMode(2); // Coloca em modo stand by (talvez essa função deva ser chamada logo depois de configurar como LoRa na linha 312)
+    // Modo standby final
+    printf("\n\n--- CONFIGURAÇÃO FINAL - MODO STANDBY ---");
+    printf("\nRegOpMode antes standby: 0x%02X", readRegister(REG_OPMODE));
+    setMode(RF95_MODE_STANDBY); // Coloca em modo stand by
+    printf("\nRegOpMode após standby: 0x%02X", readRegister(REG_OPMODE));
 
-    printf("\n Configuração realizada, modo stand by ativo.");
-
+    printf("\n\n=== CONFIGURAÇÃO LORA CONCLUÍDA ===\n");
 }
 
 void sendSensorData() {
@@ -456,13 +462,19 @@ void sendSensorData() {
     payload.temp_bmp280 = BMP280_data.temperature;
     payload.pressure_bmp280 = BMP280_data.pressure;
     
+<<<<<<< HEAD
     
     // Enviar via LoRa
     setMode(2); // Standby
+=======
+    setMode(RF95_MODE_STANDBY); // Standby
+>>>>>>> Rx-test
     
     // Limpar IRQ flags
     writeRegister(REG_IRQ_FLAGS, 0xFF);
-    
+
+    writeRegister(REG_DIO_MAPPING_1, 0x40);		// 01 00 00 00 mapear DIO0 para o TxDone
+
     // Configurar FIFO
     writeRegister(REG_FIFO_TX_BASE_AD, 0x80);   // Define o endereço inicial da partição da FIFO em que os dados para transmissão serão armazenados (bits 128 até 255)
     writeRegister(REG_FIFO_ADDR_PTR, 0x80); // Desloca o ponteiro da FIFO para a posição inicial correspondentes aos dados de transmissão
@@ -484,7 +496,7 @@ void sendSensorData() {
     }
     
     // Iniciar transmissão
-    setMode(4); // TX mode
+    setMode(RF95_MODE_TX); // TX mode
     
     // Aguardar transmissão completar
     while(!(readRegister(REG_IRQ_FLAGS) & 0x08)) {
@@ -495,7 +507,7 @@ void sendSensorData() {
     writeRegister(REG_IRQ_FLAGS, 0x08);
     
     // Voltar para standby
-    setMode(2);
+    setMode(RF95_MODE_STANDBY);
     
     printf("Dados enviados via LoRa!\n");
     printf("Temp AHT20: %.2f°C\n", payload.temp_aht20);
