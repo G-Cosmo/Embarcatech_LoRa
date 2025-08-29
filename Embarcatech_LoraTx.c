@@ -276,11 +276,6 @@ void setFrequency(double Frequency)
     writeRegister(REG_FRF_MSB, (FrequencyValue >> 16) & 0xFF); // Escrita no registrador RegFrMsb (0x06)
     writeRegister(REG_FRF_MID, (FrequencyValue >> 8) & 0xFF); // Escrita no registrador RegFrMid (0x07)
     writeRegister(REG_FRF_LSB, FrequencyValue & 0xFF); // Escrita no registrador RegFrLsb (0x08)
-    //printf("Impressão de valor binário da frequência:\n");
-
-    // imprimir_binario(FrequencyValue); // Imprimir o valor binário de 32 bits - FrequencyValue
-    // printf("\n");
-    // printf("Frequ. Regs. config:\n");
 
     // Teste de leitura dos registradores RegFrMsb, RegFrMid e RegFrLsb.
     readRegister(REG_FRF_MSB);
@@ -462,13 +457,7 @@ void sendSensorData() {
     payload.temp_bmp280 = BMP280_data.temperature;
     payload.pressure_bmp280 = BMP280_data.pressure;
     
-<<<<<<< HEAD
-    
-    // Enviar via LoRa
-    setMode(2); // Standby
-=======
     setMode(RF95_MODE_STANDBY); // Standby
->>>>>>> Rx-test
     
     // Limpar IRQ flags
     writeRegister(REG_IRQ_FLAGS, 0xFF);
@@ -476,23 +465,18 @@ void sendSensorData() {
     writeRegister(REG_DIO_MAPPING_1, 0x40);		// 01 00 00 00 mapear DIO0 para o TxDone
 
     // Configurar FIFO
-    writeRegister(REG_FIFO_TX_BASE_AD, 0x80);   // Define o endereço inicial da partição da FIFO em que os dados para transmissão serão armazenados (bits 128 até 255)
-    writeRegister(REG_FIFO_ADDR_PTR, 0x80); // Desloca o ponteiro da FIFO para a posição inicial correspondentes aos dados de transmissão
-
-        
-    // A função setLora() já define o tamanho do payload de acordo com a variável global
-    // No entanto, a linha abaixo reescreve o tamanho do payload para garantir que seja exatamente do tamanho da estrutura
-    // Isso evita que um tamanho maior do que o necessário seja alocado, mas essa linha pode ser comentada
-    writeRegister(REG_PAYLOAD_LENGTH, sizeof(sensor_payload_t)); 
-
-    printf("\n Tamanho desejado do payload: %d, Tamanho armazenado:", sizeof(sensor_payload_t));
-    readRegister(REG_PAYLOAD_LENGTH);
-
-    // Escrever payload no FIFO
+    writeRegister(REG_FIFO_TX_BASE_AD, 0x80);
+    writeRegister(REG_FIFO_ADDR_PTR, 0x80);
+    
+    // Definir tamanho correto do payload
+    writeRegister(REG_PAYLOAD_LENGTH, sizeof(sensor_payload_t));
+    
+    printf("\nTamanho do payload: %d bytes\n", sizeof(sensor_payload_t));
+    
+    // Escrever payload no FIFO byte a byte
     uint8_t *payload_bytes = (uint8_t*)&payload;
     for(int i = 0; i < sizeof(sensor_payload_t); i++) {
         writeRegister(REG_FIFO, payload_bytes[i]);
-        printf("\n Payload bytes: %d ",payload_bytes[i]);
     }
     
     // Iniciar transmissão
